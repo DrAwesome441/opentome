@@ -1,0 +1,296 @@
+"""Unit tests for export/resolve_anilist.py. Run: python3 export/test_resolve_anilist.py
+
+Offline: AniList responses were recorded once into export/fixtures/anilist/ (the resolver's
+own cache format, so the real request/cache path runs) with
+    ANILIST_RECORD=1 python3 export/test_resolve_anilist.py
+Re-record only when AniList's data for these entries must be refreshed; the assertions are
+the verdicts of Mangarr's 2026-09-15 metadata audit and must keep holding.
+"""
+import os, sqlite3, sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+os.environ.setdefault("ANILIST_CACHE", os.path.join(HERE, "fixtures", "anilist"))
+if not os.environ.get("ANILIST_RECORD"):
+    os.environ.setdefault("ANILIST_OFFLINE", "1")
+sys.path.insert(0, HERE)
+import resolve_anilist as R  # noqa: E402
+
+FAILS = []
+
+
+def eq(label, got, want):
+    ok = got == want
+    print(("  ok   " if ok else "  FAIL ") + label + ("" if ok else f"  got={got!r} want={want!r}"))
+    if not ok:
+        FAILS.append(label)
+
+
+# ---- the rules, no fixtures --------------------------------------------
+eq("key: punctuation, case, spacing", R.key("Re:ZERO -Starting Life-"), "rezerostartinglife")
+eq("for_search: U+2019 -> '", R.for_search("Let\u2019s Do It Already!"), "Let's Do It Already!")
+eq("for_search: dashes + NBSP + spaces", R.for_search("A\u00a0\u2013 B  \u2014 C"), "A - B - C")
+
+one_shot = {"id": 1, "format": "ONE_SHOT", "volumes": 1, "popularity": 9, "status": "FINISHED",
+            "title": {"english": "X"}, "synonyms": []}
+serial = {"id": 2, "format": "MANGA", "volumes": 20, "popularity": 5, "status": "FINISHED",
+          "title": {"english": "X"}, "synonyms": []}
+syn = {"id": 3, "format": "MANGA", "volumes": 21, "popularity": 99, "status": "FINISHED",
+       "title": {"english": "Y"}, "synonyms": ["X"]}
+m, via, rej = R.pick([one_shot, syn, serial], "X", 20)
+eq("ONE_SHOT rejected; primary beats a more popular synonym (R1: the carrier is logged, not ranked)", (m["id"], via, rej),
+   (2, "primary", ["1:ONE_SHOT", "3:synonym only (a primary-title candidate is on the page)"]))
+m, via, _ = R.pick([syn, {**syn, "id": 4, "popularity": 100}], "X", 20)
+eq("synonym ties break on popularity", (m["id"], via), (4, "synonym"))
+# R1 (the 2026-09-15 live run): a synonym-only carrier never wins while ANY candidate on the page has
+# primary-title equality, even one the rules rejected -- a primary rejected on volumes says "this is
+# the work but the count disagrees", a same-named ONE_SHOT is the serial's pilot; either way the
+# carrier is a chapter title wearing the name, and unresolved is recoverable where a wrong bind is not
+eq("R1: synonym carrier never wins beside a primary-title candidate rejected on volumes (Doll-shaped)",
+   R.pick([{**serial, "id": 31566, "volumes": 1}, {**syn, "id": 128084, "volumes": 4}], "X", 6),
+   (None, None, ["31566:volumes 1 vs 6", "128084:synonym only (a primary-title candidate is on the page)"]))
+eq("R1: synonym carrier never wins beside a same-named ONE_SHOT",
+   R.pick([one_shot, {**syn, "volumes": 3}], "X", None),
+   (None, None, ["1:ONE_SHOT", "3:synonym only (a primary-title candidate is on the page)"]))
+m, via, _ = R.pick([{**syn, "volumes": 3}], "X", None)
+eq("R1 does not fire without a primary-title candidate on the page", (m["id"], via), (3, "synonym"))
+# the ONE-SIDED volume rule (contract "Volume rule"): smaller than the line by more than
+# max(3, 40 %) rejects (x2 tolerance while RELEASING); larger than 4x the line rejects;
+# larger within 4x never does (2-in-1 English lines, a catalogue that lags an ongoing series)
+m, _, rej = R.pick([{**serial, "volumes": 1}], "X", 63)
+eq("smaller by more than the tolerance (1 vs 63) rejects", (m, rej), (None, ["2:volumes 1 vs 63"]))
+m, _, _ = R.pick([{**serial, "volumes": 5}], "X", 11)
+eq("5 vs 11: 6 > max(3, 4.4) rejects", m, None)
+m, _, _ = R.pick([{**serial, "volumes": 8}], "X", 11)
+eq("8 vs 11: 3 <= max(3, 4.4) passes", m["id"], 2)
+m, _, _ = R.pick([{**serial, "volumes": 4, "status": "RELEASING"}], "X", 11)
+eq("RELEASING doubles the tolerance (11-4 = 7 <= 8.8)", m["id"], 2)
+m, _, _ = R.pick([{**serial, "volumes": 9}], "X", 5)
+eq("larger within 4x passes (Erased: 9 tankobon vs 5 English 2-in-1 books)", m["id"], 2)
+m, _, _ = R.pick([{**serial, "volumes": 29}], "X", 15)
+eq("larger within 4x passes (Vinland Saga: 29 vs 15)", m["id"], 2)
+m, _, rej = R.pick([{**serial, "volumes": 63}], "X", 5)
+eq("larger than 4x the line rejects (63 vs 5)", (m, rej), (None, ["2:volumes 63 > 4x 5"]))
+m, _, _ = R.pick([{**serial, "volumes": 20}], "X", 5)
+eq("exactly 4x passes (20 vs 5)", m["id"], 2)
+# R2 (the 2026-09-15 live run): no 4x ceiling for a line of 1-2 volumes -- a one-book release or a
+# run cut short binds the full Japanese serial; the smaller-side rule still applies
+m, _, _ = R.pick([{**serial, "volumes": 5}], "X", 1)
+eq("R2: a 1-volume line has no ceiling (Pupa: 5 vs 1)", m["id"], 2)
+m, _, _ = R.pick([{**serial, "volumes": 63}], "X", 2)
+eq("R2: a 2-volume line has no ceiling (63 vs 2)", m["id"], 2)
+m, _, rej = R.pick([{**serial, "volumes": 13}], "X", 3)
+eq("R2 stops at 3 volumes: 13 > 4x 3 rejects", (m, rej), (None, ["2:volumes 13 > 4x 3"]))
+m, via, _ = R.pick([{**serial, "volumes": 5, "popularity": 12000}, {**syn, "volumes": 1, "popularity": 300}], "X", 1)
+eq("R2 + primary over synonym: the tiny line binds the full serial, not the 1-volume carrier", (m["id"], via), (2, "primary"))
+# R3 (the 2026-09-15 live run): the lifted ceiling is for the line's OWN name (and its de-slugged
+# form); an alias retry always keeps it, or a spin-off's bare franchise alias binds the main serial
+m, _, rej = R.pick([{**serial, "volumes": 34}], "X", 2, own_name=False)
+eq("R3: an alias term keeps the ceiling for a tiny line (34 vs 2)", (m, rej), (None, ["2:volumes 34 > 4x 2"]))
+m, _, _ = R.pick([{**serial, "volumes": 9}], "X", 2, own_name=False)
+eq("R3: 9 > 4x 2 rejects on an alias term", m, None)
+m, _, _ = R.pick([{**serial, "volumes": 8}], "X", 2, own_name=False)
+eq("R3: exactly 4x passes on an alias term (8 vs 2)", m["id"], 2)
+m, _, _ = R.pick([{**serial, "volumes": 34}], "X", 2, own_name=True)
+eq("R3 leaves the own-name exemption alone (34 vs 2 passes on the name)", m["id"], 2)
+m, _, _ = R.pick([{**serial, "volumes": 13}], "X", 3, own_name=False)
+eq("R3: a 3-volume line never had the exemption (13 > 4x 3 rejects on an alias term)", m, None)
+m, _, _ = R.pick([{**serial, "volumes": None}], "X", 63)
+eq("null volumes are never compared", m["id"], 2)
+eq("no equality -> no pick, no rejection", R.pick([serial], "Z", 20), (None, None, []))
+eq("alias terms: dedupe by key, skip the name and list articles, never capped (only searches are)",
+   R.alias_terms("Fairy Tail", ["Fairy Tail", "List of Fairy Tail volumes", "Feari Teiru", "feari teiru",
+                                "Fairy Tail (anime)", "Plot of Fairy Tail", "A", "B", "C", "D", "E", "F"]),
+   ["Feari Teiru", "Fairy Tail (anime)", "A", "B", "C", "D", "E", "F"])
+eq("deslug: Mangarr's de-slugged foreign id form", R.deslug("Let\u2019s Do It Already!"), "let s do it already")
+eq("deslug keeps the name's key", R.key(R.deslug("Re:Zero (The Sanctuary and the Witch of Greed)")),
+   R.key("Re:Zero (The Sanctuary and the Witch of Greed)"))
+eq("retry order: de-slugged form first, then the aliases",
+   R.retry_terms(dict(name="Blue Box", aliases=["Blue Box", "Blue Box (Manga)", "Ao no Hako"])),
+   ["blue box", "Blue Box (Manga)", "Ao no Hako"])
+
+def _gap_terms():
+    try:
+        R.search(["No Such Series XYZ"], False)
+    except R.OfflineMiss as e:
+        return e.terms
+    return "no OfflineMiss raised"
+
+
+eq("offline: an uncached term raises OfflineMiss naming the term (the replay reports it, never aborts)",
+   _gap_terms(), ["No Such Series XYZ"])
+
+# ---- the seven audit entries, offline against the recorded fixtures --------
+def page(term, novel=False):
+    """A recorded page by term; a missing committed fixture is a FAIL line, not a traceback."""
+    try:
+        return R.search([term], novel)[term]
+    except R.OfflineMiss:
+        eq("fixture present for the recorded page %r" % term, "missing", "present")
+        return []
+
+
+def line(sid, name, medium, volume_count, aliases):
+    return dict(id=sid, name=name, medium=medium, volume_count=volume_count, aliases=list(aliases),
+                anilist_id=None, novel=medium in R.NOVEL_MEDIUMS)
+
+
+# ---- the alias FLOW (Mangarr's AniListService.FindSeries): every alias is ranked against the
+# name page for free; only the first ALIAS_LIMIT page-misses cost a fresh search, each ranked
+# against its own page; an alias past the search budget still binds from the name page --------
+def flow(name, aliases, pages, volume_count=20):
+    calls = []
+    real = R.search
+    R.search = lambda terms, novel: (calls.append(list(terms)), {t: list(pages.get(t, [])) for t in terms})[1]
+    try:
+        ln = line(1, name, "manga", volume_count, aliases)
+        R.resolve([ln])
+    finally:
+        R.search = real
+    return ln, calls
+
+
+a5 = {**serial, "id": 55, "title": {"english": "A5"}}
+ln_, calls = flow("Foo", ["A1", "A2", "A3", "A4", "A5"], {"Foo": [a5]})
+eq("flow: the 5th alias binds from the name page after the 3 searches are spent (A4 page-ranked only)",
+   (ln_["pick"]["id"], ln_["via"], ln_["term"], ln_["searches"], calls),
+   (55, "alias", "A5", 3, [["Foo"], ["foo"], ["A1"], ["A2"], ["A3"]]))
+a2 = {**serial, "id": 22, "title": {"english": "A2"}}
+ln_, calls = flow("Foo", ["A1", "A2", "A3"], {"A1": [a2]})
+eq("flow: a fresh page is ranked for its own term only, then the walk continues on the name page",
+   (ln_["pick"], calls), (None, [["Foo"], ["foo"], ["A1"], ["A2"], ["A3"]]))
+ln_, calls = flow("Foo", ["A1", "A2"], {"A2": [a2]})
+eq("flow: a fresh-search hit binds via alias with the searched term",
+   (ln_["pick"]["id"], ln_["via"], ln_["term"], ln_["searches"]), (22, "alias", "A2", 2))
+ln_, calls = flow("Foo", ["A1", "List of Foo volumes", "foo", "A1"], {})
+eq("flow: list articles, the name's own key and duplicates never cost a search",
+   (ln_["pick"], ln_["searches"], calls), (None, 1, [["Foo"], ["foo"], ["A1"]]))
+big = {**serial, "id": 77, "volumes": 34, "title": {"english": "A1"}}
+ln_, calls = flow("Foo", ["A1"], {"Foo": [big]}, volume_count=2)
+eq("flow: R3 on the page-rank -- a 2-volume line's alias keeps the 4x ceiling against the name page",
+   (ln_["pick"], calls), (None, [["Foo"], ["foo"], ["A1"]]))
+
+
+MUSHOKU_ALIASES = [
+    "Mushoku Tensei", "Jobless Reincarnation", "List of Mushoku Tensei volumes",
+    "Mushoku Tensei: Jobless Reincarnation", "mushoku tensei jobless reincarnation",
+    "Liste des chapitres de Mushoku Tensei"]
+REZERO4_ALIASES = [
+    "Re:Zero (The Sanctuary and the Witch of Greed)", "re zero the sanctuary and the witch of greed",
+    "The Sanctuary and the Witch of Greed", "List of Re:Zero volumes", "list of re zero volumes", "List of Re",
+    "Re:Zero", "re zero", "Memory Snow", "Re: Life in a Different World from Zero",
+    "re life in a different world from zero", "Re: Zero", "Re:ZERO -Starting Life in Another World-",
+    "re zero starting life in another world", "Re:Zero - Starting Life in Another World",
+    "Re:Zero -Starting Life in Another World-: Death or Kiss",
+    "re zero starting life in another world death or kiss", "Re:Zero kara Hajimeru Isekai Seikatsu",
+    "re zero kara hajimeru isekai seikatsu", "Re:Zero kara Hajimeru Isekai Seikatsu: Memory Snow",
+    "re zero kara hajimeru isekai seikatsu memory snow", "Re:Zero − Starting Life in Another World",
+    "Re:Zero − Starting Life in Another World: Memory Snow",
+    "re zero starting life in another world memory snow", "Re:Zreo", "re zreo", "Re:ゼロ", "re",
+    "Re:ゼロから始める異世界生活", "Rezero",
+    "Re：ゼロから始める異世界生活",
+    "Liste des chapitres de Re:Zero − Re:vivre dans un autre monde à partir de zéro",
+    "liste des chapitres de re zero re vivre dans un autre monde partir de z ro", "Liste des chapitres de Re",
+    "Re:Zero − Re:vivre dans un autre monde à partir de zéro",
+    "re zero re vivre dans un autre monde partir de z ro"]
+
+SEVEN = [
+    # (line, audited id, how the rules reach it)
+    (line(148860797, "Fairy Tail", "manga", 63, ["Fairy Tail", "Feari Teiru"]), 30598, "primary"),
+    (line(1121851499, "Black Clover", "manga", 37, ["Black Clover"]), 86123, "primary"),
+    (line(448804592, "Blue Box", "manga", 22, ["Blue Box", "Ao no Hako"]), 132182, "primary"),
+    (line(338575746, "Let's Do It Already!", "manga", 9, ["Let's Do It Already!"]), 120768, "primary"),
+    (line(799116509, "Mushoku Tensei", "manga", 24, MUSHOKU_ALIASES), 85564, "alias"),
+    (line(1237487995, "Re:Zero (The Sanctuary and the Witch of Greed)", "manga", 11, REZERO4_ALIASES), 112218, "alias"),
+    (line(513287112, "Sword Art Online", "light_novel", 28, ["Sword Art Online", "Aincrad"]), 51479, "primary"),
+]
+seven = [c[0] for c in SEVEN]
+try:
+    R.resolve(seven)
+except R.OfflineMiss as e:   # committed fixtures: a gap here is a repo defect, a FAIL not a traceback
+    eq("fixtures cover the seven audit entries", "gap for %s" % ", ".join(map(repr, e.terms)), "ok")
+    for ln in seven:
+        ln.setdefault("pick", None); ln.setdefault("via", None); ln.setdefault("rejected", [])
+for ln, want, want_via in SEVEN:
+    got = ln["pick"]["id"] if ln["pick"] else None
+    eq(f"{ln['name']} -> {want} via {want_via}", (got, ln["via"]), (want, want_via))
+ft = seven[0]
+eq("Fairy Tail: the anthology 128087 is rejected on volumes (1 vs 63)",
+   any(r.startswith("128087:volumes") for r in ft["rejected"]), True)
+eq("Black Clover: the one-shot 114652 is rejected as ONE_SHOT", "114652:ONE_SHOT" in seven[1]["rejected"], True)
+eq("Blue Box: the one-shot 122342 is rejected as ONE_SHOT", "122342:ONE_SHOT" in seven[2]["rejected"], True)
+# the recorded `Doll` and `Pupa` pages (the 2026-09-15 live run's two wrong binds under the rules
+# before R1/R2): Doll (6-volume line) must stay unresolved -- "DOLL" 31566 (1 vol) falls to the volume
+# rule and the 4-volume 128084 "Onegai, Sore wo Yamenaide" only carries "Doll" as a synonym; the right
+# entry 30298 "DOLL: IC in a Doll" never key-equals "doll". Pupa (volume_count 1) binds the 5-volume
+# serial 75613 over the 1-volume synonym carrier 191157 "Niku Yawame Mitsu Koime".
+m, via, rej = R.pick(page("Doll"), "Doll", 6)
+eq("Doll page: unresolved; 31566 rejected on volumes, 128084 rejected as synonym-only",
+   (m, via, "31566:volumes 1 vs 6" in rej, "128084:synonym only (a primary-title candidate is on the page)" in rej),
+   (None, None, True, True))
+m, via, rej = R.pick(page("Pupa"), "Pupa", 1)
+eq("Pupa page: 75613 via primary (5 vols vs a 1-volume line, no ceiling); 191157 rejected as synonym-only",
+   ((m or {}).get("id"), via, "191157:synonym only (a primary-title candidate is on the page)" in rej), (75613, "primary", True))
+# the recorded `Shingeki no Kyojin` page + the full Harsh Mistress line (the 2026-09-15 live run's
+# one R2 side effect): the 2-volume spin-off's third alias is the bare franchise name, and only R3
+# keeps the 34-volume 53390 out; the line's own name and de-slugged form find nothing, so it stays
+# NULL (its own AniList entry carries no title the catalogue's names key-equal)
+m, via, rej = R.pick(page("Shingeki no Kyojin"), "Shingeki no Kyojin", 2, own_name=False)
+eq("Shingeki no Kyojin page as an alias of a 2-volume line: 53390 rejected past the ceiling",
+   (m, "53390:volumes 34 > 4x 2" in rej), (None, True))
+hm = line(80957137, "Attack on Titan: Harsh Mistress of the City", "manga", 2,
+          ["Attack on Titan: Harsh Mistress of the City", "attack on titan harsh mistress of the city",
+           "Shingeki no Kyojin: Kakuzetsu Toshi no Joō", "shingeki no kyojin kakuzetsu toshi no jo", "Shingeki no Kyojin",
+           "L'Attaque des Titans: Hope of the City", "l attaque des titans hope of the city", "L'Attaque des Titans",
+           "l attaque des titans", "進撃の巨人 隔絶都市の女王"])
+R.resolve([hm])
+eq("Harsh Mistress of the City resolves to nothing, never 53390", (hm["pick"], hm["via"]), (None, None))
+# the `Re:Zero` search page itself (recorded): three entries carry the synonym `ReZero`; only the
+# arc with an unknown volume count survives the one-sided rule against the line's 11
+m, via, rej = R.pick(page("Re:Zero"), "Re:Zero", 11)
+eq("Re:Zero page: 112218 via synonym; chapter 2 (5 vols) and Kenki Renka (4 vols) rejected vs 11",
+   ((m or {}).get("id"), via, {"85814", "110174"} <= {r.split(":")[0] for r in rej if "volumes" in r}), (112218, "synonym", True))
+
+# ---- the 44 audited lines of the current build: no pick may move off its audited id -----
+# (D9: a line already right stays right; a line the rules cannot reach stays NULL, never wrong)
+AUDITED = {
+    1688349463: 116401, 869082368: 180422, 1614839810: 53390, 235198204: 30002, 1121851499: 86123,
+    448804592: 132182, 147190835: 105778, 435248217: 132029, 101154347: 87216, 1671491179: 69325,
+    148860797: 30598, 597781225: 86310, 977985946: 118586, 1286632839: 72451, 1546561395: 101517,
+    1391365692: 86635, 1247831263: 177806, 1966333010: 120760, 338575746: 120768, 1067107183: 147329,
+    799116509: 85564, 464492586: 101583, 921676189: 85486, 731149751: 97842, 106977862: 85736,
+    1916098245: 85814, 1014345923: 87259, 686054964: 118370, 1237487995: 112218, 806218467: 105398,
+    513287112: 51479, 85713403: 82277, 764941466: 114613, 844542616: 114614, 1987129149: 131644,
+    466915185: 86399, 1373146654: 99022, 1528562038: 140475, 448083641: 63327, 1435036878: 30642,
+    1867685718: 110218, 647305486: 98263, 1852909690: 117195, 471915974: 97337,
+}
+ART = os.environ.get("OPENTOME_ART", os.path.join(os.path.dirname(HERE), "build", "manga-metadata.sqlite"))
+if os.path.exists(ART):
+    db = sqlite3.connect("file:%s?mode=ro" % ART, uri=True)
+    lines = []
+    for sid in AUDITED:
+        ln = R.load_line(db, sid)
+        eq(f"line {sid} present in the artifact", ln is not None, True)
+        if ln:
+            ln["anilist_id"] = None
+            lines.append(ln)
+    # A fixture gap (an alias row of an audited line changed since the recording) is a replay
+    # limitation, not an artifact defect: report it, never abort tier0/rebuild_all.sh step 0.
+    try:
+        R.resolve(lines)
+    except R.OfflineMiss as e:
+        print("  info  44-line replay skipped: fixture gap for %s (re-record with ANILIST_RECORD=1)"
+              % ", ".join(map(repr, e.terms)))
+    else:
+        wrong = [(ln["name"], ln["pick"]["id"]) for ln in lines if ln["pick"] and ln["pick"]["id"] != AUDITED[ln["id"]]]
+        eq("no audited line resolves to a different id than the audit's", wrong, [])
+        unresolved = [ln["name"] for ln in lines if not ln["pick"]]
+        eq("at least 40 of the 44 audited lines resolve", len(lines) - len(unresolved) >= 40, True)
+        print("  info  unresolved audited lines (stay NULL, Mangarr's own search handles them): %s" % (unresolved or "none"))
+else:
+    print("  info  44-line replay skipped: no artifact at %s" % ART)
+
+print()
+if FAILS:
+    print(f"{len(FAILS)} FAILED: {FAILS}")
+    sys.exit(1)
+print("all resolve_anilist tests passed")
