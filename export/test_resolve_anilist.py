@@ -40,6 +40,12 @@ for raw in ["\u30b2\u30fc\u30e0", "\u30d1\u30f3", "\ud55c\uad6d\uc5b4", "\u0439"
 eq("key: an accented title and its ASCII spelling are one key", R.key("Fushigi Y\u00fbgi"), R.key("Fushigi Yugi"))
 eq("key: kana voicing marks still count (\u30ac != \u30ab)", R.key("\u30ac") != R.key("\u30ab"), True)
 eq("deslug of an accented name keeps the letter", R.deslug("Fushigi Y\u00fbgi"), "fushigi yugi")
+# the numeric-symbol fold: No / Nl only, NFKC per character, the fraction slash dropped
+for raw, want in [("Ranma \u00bd", "Ranma 12"), ("\u2161", "II"), ("x\u00b2", "x2"), ("\u2460", "1")]:
+    eq("for_search folds the numeric symbol: %r" % raw, R.for_search(raw), want)
+eq("key: Ranma \u00bd = Ranma 1/2 = Ranma \u00b9\u2044\u2082", {R.key("Ranma \u00bd"), R.key("Ranma 1/2"), R.key("Ranma \u00b9\u2044\u2082")}, {"ranma12"})
+for raw in ["\uff32\uff41\uff4e\uff4d\uff41", "\ufb01"]:
+    eq("fold leaves full-width / ligatures alone: %r" % raw, R.fold(raw), raw)
 
 one_shot = {"id": 1, "format": "ONE_SHOT", "volumes": 1, "popularity": 9, "status": "FINISHED",
             "title": {"english": "X"}, "synonyms": []}
@@ -274,7 +280,7 @@ eq("R6: version / release / tankobon / 2-in-1 are qualifiers",
                                     "Foo (Shins\u014dban)", "Foo (English-language volume list)")],
    ["Yo-kai Watch", "Tomie", "Arata: The Legend", "Foo", "Foo", "Foo", "Foo"])
 eq("R6: an unclosed outer parenthetical goes too",
-   R.edition_stripped("Ranma \u00bd (2014 English release (2-in-1 Edition)"), "Ranma \u00bd")
+   R.edition_stripped("Ranma \u00bd (2014 English release (2-in-1 Edition)"), "Ranma 12")   # for_search()'s numeric fold
 eq("R6: never an arc, a chapter list, a nested series or a plain subtitle",
    [R.edition_stripped(n) for n in ("Re:Zero (Truth of Zero)", "The Wallflower (Chapter and volume list)",
                                     "Foo (Manga series (2010 edition))", "Restaurant to Another World (First series)",
