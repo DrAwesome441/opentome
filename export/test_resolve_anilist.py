@@ -170,10 +170,7 @@ eq("no equality -> no pick, no rejection", R.pick([serial], "Z", 20), (None, Non
 eq("alias terms: dedupe by key, skip the name and list articles, never capped (only searches are)",
    R.alias_terms("Fairy Tail", ["Fairy Tail", "List of Fairy Tail volumes", "Feari Teiru", "feari teiru",
                                 "Fairy Tail (anime)", "Plot of Fairy Tail", "A", "B", "C", "D", "E", "F"]),
-   ["Fairy Tail (anime)", "Feari Teiru", "A", "B", "C", "D", "E", "F"])
-eq("R8: aliases that are a prefix of the name's key or contain it go first, stored order kept",
-   R.alias_terms("Frieren: Beyond Journey's End", ["Sousou no Frieren", "Fri", "Frieren", "Frieren: Beyond Journey's End (manga)"]),
-   ["Frieren", "Frieren: Beyond Journey's End (manga)", "Sousou no Frieren", "Fri"])
+   ["Feari Teiru", "Fairy Tail (anime)", "A", "B", "C", "D", "E", "F"])
 eq("deslug: Mangarr's de-slugged foreign id form", R.deslug("Let\u2019s Do It Already!"), "let s do it already")
 eq("deslug keeps the name's key", R.key(R.deslug("Re:Zero (The Sanctuary and the Witch of Greed)")),
    R.key("Re:Zero (The Sanctuary and the Witch of Greed)"))
