@@ -147,6 +147,23 @@ eq("R5 does not fire beside a same-named ONE_SHOT either",
    R.pick([{**one_shot, "title": {"english": "Night Shift"}}, sub], "Night Shift", 3)[:2], (None, None))
 m, via, _ = R.pick([{**sub, "title": {"english": "Night Shift"}}, {**sub, "id": 51}], "Night Shift", 3)
 eq("R5 never outranks equality: the equal title wins, the substring one is ignored", (m["id"], via), (50, "primary"))
+# R7 (2026-09-24): equality after dropping one leading the / a / an from both sides, a tier below
+# exact equality ("Hollow Regalia" is AniList's "The Hollow Regalia")
+art = {**serial, "id": 70, "title": {"english": "The Night Shift"}}
+m, via, _ = R.pick([art], "Night Shift", 20)
+eq("R7: 'Night Shift' binds 'The Night Shift'", (m["id"], via), (70, "article"))
+m, via, _ = R.pick([{**art, "title": {"english": "Night Shift"}}], "A Night Shift", 20)
+eq("R7: the article on the term's side drops too", (m["id"], via), (70, "article"))
+m, via, _ = R.pick([art, {**serial, "id": 71, "title": {"english": "Night Shift"}}], "Night Shift", 20)
+eq("R7 never outranks exact equality", (m["id"], via), (71, "primary"))
+eq("R7: only a whole leading word is an article ('Theater' is not 'the ater')",
+   R.pick([{**art, "title": {"english": "Theater Night"}}], "ater Night", 19)[:2], (None, None))
+eq("R7 keeps the volume rule (1 vs 20)", R.pick([{**art, "volumes": 1}], "Night Shift", 20)[:2], (None, None))
+eq("R7 keeps ONE_SHOT out", R.pick([{**art, "format": "ONE_SHOT"}], "Night Shift", 20)[:2], (None, None))
+eq("R7 keeps R1: an article-equal synonym carrier never wins beside an article-equal primary rejected on volumes",
+   R.pick([{**art, "volumes": 1}, {**syn, "id": 72, "synonyms": ["The Night Shift"]}], "Night Shift", 20)[:2], (None, None))
+m, via, _ = R.pick([{**syn, "id": 72, "synonyms": ["The Night Shift"]}], "Night Shift", 20)
+eq("R7 reads synonyms (no primary-title candidate on the page)", (m["id"], via), (72, "article"))
 m, _, _ = R.pick([{**serial, "volumes": None}], "X", 63)
 eq("null volumes are never compared", m["id"], 2)
 eq("no equality -> no pick, no rejection", R.pick([serial], "Z", 20), (None, None, []))
@@ -359,6 +376,9 @@ eq("Bookworm page: a count no Part has (6) binds nothing", (m, via), (None, None
 t2 = "Ascendance of a Bookworm (Part 2: Apprentice Shrine Maiden)"
 m, via, _ = R.pick(page(t2, novel=True), t2, 4)
 eq("Bookworm Part 2 page: 110800 'Ascendance of a Bookworm: Part 2' (shorter than the term)", ((m or {}).get("id"), via), (110800, "substring"))
+
+m, via, _ = R.pick(page("Hollow Regalia", novel=True), "Hollow Regalia", 6)
+eq("Hollow Regalia page: 133016 'The Hollow Regalia' via the article tier (R7)", ((m or {}).get("id"), via), (133016, "article"))
 
 # the `Re:Zero` search page itself (recorded): three entries carry the synonym `ReZero`; only the
 # arc with an unknown volume count survives the one-sided rule against the line's 11
