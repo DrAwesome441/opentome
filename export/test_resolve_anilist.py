@@ -68,8 +68,9 @@ m, _, _ = R.pick([{**serial, "volumes": 9}], "X", 5)
 eq("larger within 4x passes (Erased: 9 tankobon vs 5 English 2-in-1 books)", m["id"], 2)
 m, _, _ = R.pick([{**serial, "volumes": 29}], "X", 15)
 eq("larger within 4x passes (Vinland Saga: 29 vs 15)", m["id"], 2)
-m, _, rej = R.pick([{**serial, "volumes": 63}], "X", 5)
-eq("larger than 4x the line rejects (63 vs 5)", (m, rej), (None, ["2:volumes 63 > 4x 5"]))
+m, via, rej = R.pick([{**serial, "volumes": 63}], "X", 5)
+eq("larger than 4x the line is rejected (63 vs 5) -- only R4's fallback tier then binds it",
+   ((m or {}).get("id"), via, rej), (2, "ceiling", ["2:volumes 63 > 4x 5"]))
 m, _, _ = R.pick([{**serial, "volumes": 20}], "X", 5)
 eq("exactly 4x passes (20 vs 5)", m["id"], 2)
 # R2 (the 2026-09-15 live run): no 4x ceiling for a line of 1-2 volumes -- a one-book release or a
@@ -78,8 +79,9 @@ m, _, _ = R.pick([{**serial, "volumes": 5}], "X", 1)
 eq("R2: a 1-volume line has no ceiling (Pupa: 5 vs 1)", m["id"], 2)
 m, _, _ = R.pick([{**serial, "volumes": 63}], "X", 2)
 eq("R2: a 2-volume line has no ceiling (63 vs 2)", m["id"], 2)
-m, _, rej = R.pick([{**serial, "volumes": 13}], "X", 3)
-eq("R2 stops at 3 volumes: 13 > 4x 3 rejects", (m, rej), (None, ["2:volumes 13 > 4x 3"]))
+m, via, rej = R.pick([{**serial, "volumes": 13}], "X", 3)
+eq("R2 stops at 3 volumes: 13 > 4x 3 is rejected (only R4's fallback tier then binds it)",
+   ((m or {}).get("id"), via, rej), (2, "ceiling", ["2:volumes 13 > 4x 3"]))
 m, via, _ = R.pick([{**serial, "volumes": 5, "popularity": 12000}, {**syn, "volumes": 1, "popularity": 300}], "X", 1)
 eq("R2 + primary over synonym: the tiny line binds the full serial, not the 1-volume carrier", (m["id"], via), (2, "primary"))
 # R3 (the 2026-09-15 live run): the lifted ceiling is for the line's OWN name (and its de-slugged
@@ -94,6 +96,29 @@ m, _, _ = R.pick([{**serial, "volumes": 34}], "X", 2, own_name=True)
 eq("R3 leaves the own-name exemption alone (34 vs 2 passes on the name)", m["id"], 2)
 m, _, _ = R.pick([{**serial, "volumes": 13}], "X", 3, own_name=False)
 eq("R3: a 3-volume line never had the exemption (13 > 4x 3 rejects on an alias term)", m, None)
+# R4 (Weed, 2026-09-24): an exact title match rejected SOLELY by the 4x ceiling binds when nothing
+# passed the ceiling -- a short English run of the full Japanese serial (Weed: 3 English volumes of
+# the 60-volume Ginga Densetsu Weed). Own-name terms only (R3), never over a ceiling-passing candidate.
+m, via, _ = R.pick([{**serial, "volumes": 60}], "X", 3)
+eq("R4: an exact primary rejected only by the ceiling binds when nothing else did (60 vs 3)", (m["id"], via), (2, "ceiling"))
+m, via, _ = R.pick([{**syn, "volumes": 60}], "X", 3)
+eq("R4: an exact synonym rejected only by the ceiling binds too", (m["id"], via), (3, "ceiling"))
+m, via, _ = R.pick([{**serial, "volumes": 60}], "X", 3, own_name=False)
+eq("R4 never fires on an alias term (R3 keeps the ceiling)", (m, via), (None, None))
+m, via, _ = R.pick([{**serial, "id": 31741, "volumes": 33}, {**serial, "id": 147044, "volumes": 4}], "X", 3)
+eq("R4 never replaces a candidate that passes the ceiling (Worst-shaped: 4 vols beats 33)", (m["id"], via), (147044, "primary"))
+m, via, _ = R.pick([{**syn, "id": 8, "volumes": 60, "popularity": 999}, {**syn, "id": 9, "volumes": 3}], "X", 3)
+eq("R4 never outranks a ceiling-passing synonym either", (m["id"], via), (9, "synonym"))
+m, via, rej = R.pick([{**serial, "volumes": 60}, {**syn, "id": 9, "volumes": 3}], "X", 3)
+eq("R4 after R1: the oversized primary IS the work, so its synonym carrier stays rejected and R4 binds the primary",
+   (m["id"], via, "9:synonym only (a primary-title candidate is on the page)" in rej), (2, "ceiling", True))
+m, via, _ = R.pick([{**one_shot, "volumes": 60}], "X", 3)
+eq("R4: a ONE_SHOT is never bound, whatever its volumes", (m, via), (None, None))
+m, via, _ = R.pick([{**serial, "volumes": 1}, {**syn, "volumes": 60}], "X", 6)
+eq("R4 keeps R1: an oversized synonym carrier never wins beside a primary-title candidate",
+   (m, via), (None, None))
+m, via, _ = R.pick([{**serial, "title": {"english": "X Gaiden"}, "volumes": 60}], "X", 3)
+eq("R4 needs exact equality: a longer title rejected on the ceiling stays out", (m, via), (None, None))
 m, _, _ = R.pick([{**serial, "volumes": None}], "X", 63)
 eq("null volumes are never compared", m["id"], 2)
 eq("no equality -> no pick, no rejection", R.pick([serial], "Z", 20), (None, None, []))
@@ -244,6 +269,23 @@ hm = line(80957137, "Attack on Titan: Harsh Mistress of the City", "manga", 2,
            "l attaque des titans", "進撃の巨人 隔絶都市の女王"])
 R.resolve([hm])
 eq("Harsh Mistress of the City resolves to nothing, never 53390", (hm["pick"], hm["via"]), (None, None))
+# the recorded `Weed` and `Worst` pages (the opentome-2026-09-24 wrong binds): Weed (3 EN volumes)
+# has only oversized exact matches on its name page -- 34010 "Ginga Densetsu WEED" (60 vols, synonym
+# "WEED") and the 30-volume Orion spin-off, which never key-equals "weed" -- so R4 binds 34010. Worst
+# (3 EN volumes) has 147044 "Worst" (4 vols) passing the ceiling, so R4 must NOT move it to 31741 (33
+# vols, the right work) -- that one is corrections/anilist.json's pin, not a rule.
+m, via, rej = R.pick(page("Weed"), "Weed", 3)
+eq("Weed page: 34010 via the ceiling tier (synonym WEED); 45785 Orion rejected past the ceiling, never bound",
+   ((m or {}).get("id"), via, "45785:volumes 30 > 4x 3" in rej), (34010, "ceiling", True))
+m, via, _ = R.pick(page("Weed"), "Weed", 3, own_name=False)
+eq("Weed page as an alias term: nothing (R3)", (m, via), (None, None))
+m, via, _ = R.pick(page("Worst"), "Worst", 3)
+eq("Worst page: 147044 stays (it passes the ceiling); R4 does not fire", ((m or {}).get("id"), via), (147044, "primary"))
+wd = line(1868367905, "Weed", "manga", 3, ["Weed", "Ginga Dendetsu Weed", "Ginga Densetsu WEED"])
+R.resolve([wd])
+eq("Weed line: binds 34010 from its name page, before any alias search",
+   ((wd["pick"] or {}).get("id"), wd["via"], wd["term"]), (34010, "ceiling", "Weed"))
+
 # the `Re:Zero` search page itself (recorded): three entries carry the synonym `ReZero`; only the
 # arc with an unknown volume count survives the one-sided rule against the line's 11
 m, via, rej = R.pick(page("Re:Zero"), "Re:Zero", 11)
