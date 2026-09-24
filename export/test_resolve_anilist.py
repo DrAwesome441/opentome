@@ -164,6 +164,19 @@ eq("R7 keeps R1: an article-equal synonym carrier never wins beside an article-e
    R.pick([{**art, "volumes": 1}, {**syn, "id": 72, "synonyms": ["The Night Shift"]}], "Night Shift", 20)[:2], (None, None))
 m, via, _ = R.pick([{**syn, "id": 72, "synonyms": ["The Night Shift"]}], "Night Shift", 20)
 eq("R7 reads synonyms (no primary-title candidate on the page)", (m["id"], via), (72, "article"))
+# R7 respects R1 ACROSS tiers (review, 2026-09-24): an exact primary-title candidate on the page -- even
+# one rejected on volumes, or a same-named ONE_SHOT -- is the work with a disputed count, so an
+# article-equal candidate beside it never binds; and R4 never binds an oversized exact title over an
+# article-equal candidate that passes the ceiling
+eq("R7 + R1 (Doll-shaped): 'Doll' 1 vol rejected on volumes beside 'The Doll' 6 vols -> nothing",
+   R.pick([{**serial, "id": 31566, "volumes": 1, "title": {"english": "Doll"}},
+           {**serial, "id": 80, "volumes": 6, "title": {"english": "The Doll"}}], "Doll", 6)[:2], (None, None))
+eq("R7 + R1: a 'Doll' ONE_SHOT beside 'The Doll' 6 vols -> nothing",
+   R.pick([{**one_shot, "title": {"english": "Doll"}},
+           {**serial, "id": 80, "volumes": 6, "title": {"english": "The Doll"}}], "Doll", 6)[:2], (None, None))
+eq("R4 + R7: an oversized 'Weed' (60) beside a 3-volume 'The Weed' -> nothing",
+   R.pick([{**serial, "id": 34010, "volumes": 60, "title": {"english": "Weed"}},
+           {**serial, "id": 81, "volumes": 3, "title": {"english": "The Weed"}}], "Weed", 3)[:2], (None, None))
 m, _, _ = R.pick([{**serial, "volumes": None}], "X", 63)
 eq("null volumes are never compared", m["id"], 2)
 eq("no equality -> no pick, no rejection", R.pick([serial], "Z", 20), (None, None, []))
@@ -256,6 +269,11 @@ eq("R6: never an arc, a chapter list, a nested series or a plain subtitle",
                                     "Foo (Manga series (2010 edition))", "Restaurant to Another World (First series)",
                                     "Weed", "(Deluxe edition)")],
    [None, None, None, None, None, None])
+eq("R6: never a parenthetical that quotes another work's title (straight or curly quotes)",
+   [R.edition_stripped(n) for n in ('Amazing Agent Luna ("Amazing Agent Jennifer" Volume list)',
+                                    "Amazing Agent Luna (\u201cAmazing Agent Jennifer\u201d Volume list)")],
+   [None, None])
+eq("R6: an apostrophe is not a quotation mark", R.edition_stripped("Marmalade Boy (Collector's edition)"), "Marmalade Boy")
 eq("retry order: de-slugged form, then the edition-stripped name, then the aliases",
    R.retry_terms(dict(name="Blue Box (VizBig edition)", aliases=["Ao no Hako"])),
    ["blue box vizbig edition", "Blue Box", "Ao no Hako"])
@@ -272,6 +290,11 @@ eq("flow R6 keeps R3: a 2-volume line never binds the 18-volume serial through t
 ln_, calls = flow("Foo (Collector's edition)", [], {}, volume_count=5)
 eq("flow R6: a stripped term with an empty page costs one search and binds nothing",
    (ln_["pick"], calls), (None, [["Foo (Collector's edition)"], ["foo collector s edition"], ["Foo"]]))
+
+fb = {**serial, "id": 90, "volumes": 20, "title": {"english": "Foob Zero: The Beginning"}}
+ln_, calls = flow("Foob Zero", [], {"foob zero": [fb]}, volume_count=20)
+eq("flow: an R5 bind on the de-slugged page is reported as its tier, not 'alias'",
+   ((ln_["pick"] or {}).get("id"), ln_["via"], ln_["term"]), (90, "substring", "foob zero"))
 
 
 MUSHOKU_ALIASES = [
