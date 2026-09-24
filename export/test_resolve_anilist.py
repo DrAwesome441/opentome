@@ -222,6 +222,40 @@ ln_, calls = flow("Foo", ["A1"], {"Foo": [big]}, volume_count=2)
 eq("flow: R3 on the page-rank -- a 2-volume line's alias keeps the 4x ceiling against the name page",
    (ln_["pick"], calls), (None, [["Foo"], ["foo"], ["A1"]]))
 
+# R6 (2026-09-24): the name without a trailing edition-qualifier parenthetical is a retry term after
+# the de-slugged form, ranked like an alias (R3): "Inuyasha (VizBig edition)" -> "Inuyasha", but
+# "Sailor Moon (Shinsōban short stories)" (2 vols) must not bind the 18-volume serial through the
+# bare "Sailor Moon" -- the R3 failure again (its own entry is "Sailor Moon Short Stories", 2 vols).
+eq("R6: edition qualifier stripped", R.edition_stripped("Inuyasha (VizBig edition)"), "Inuyasha")
+eq("R6: version / release / tankobon / 2-in-1 are qualifiers",
+   [R.edition_stripped(n) for n in ("Yo-kai Watch (Noriyuki Konishi version)", "Tomie (Original release)",
+                                    "Arata: The Legend (Tank\u014dbon edition)", "Foo (2-in-1)", "Foo (Second printing)",
+                                    "Foo (Shins\u014dban)", "Foo (English-language volume list)")],
+   ["Yo-kai Watch", "Tomie", "Arata: The Legend", "Foo", "Foo", "Foo", "Foo"])
+eq("R6: an unclosed outer parenthetical goes too",
+   R.edition_stripped("Ranma \u00bd (2014 English release (2-in-1 Edition)"), "Ranma \u00bd")
+eq("R6: never an arc, a chapter list, a nested series or a plain subtitle",
+   [R.edition_stripped(n) for n in ("Re:Zero (Truth of Zero)", "The Wallflower (Chapter and volume list)",
+                                    "Foo (Manga series (2010 edition))", "Restaurant to Another World (First series)",
+                                    "Weed", "(Deluxe edition)")],
+   [None, None, None, None, None, None])
+eq("retry order: de-slugged form, then the edition-stripped name, then the aliases",
+   R.retry_terms(dict(name="Blue Box (VizBig edition)", aliases=["Ao no Hako"])),
+   ["blue box vizbig edition", "Blue Box", "Ao no Hako"])
+inu = {**serial, "id": 30676, "volumes": 56, "title": {"english": "Foo"}}
+ln_, calls = flow("Foo (VizBig edition)", ["A1"], {"Foo": [inu]}, volume_count=18)
+eq("flow R6: the edition-stripped name is searched after the de-slugged form and binds via alias",
+   ((ln_["pick"] or {}).get("id"), ln_["via"], ln_["term"], calls),
+   (30676, "alias", "Foo", [["Foo (VizBig edition)"], ["foo vizbig edition"], ["Foo"]]))
+serial18 = {**serial, "id": 30092, "volumes": 18, "title": {"english": "Foo"}}
+short2 = {**serial, "id": 38552, "volumes": 2, "title": {"english": "Foo Short Stories"}}
+ln_, calls = flow("Foo (Shins\u014dban short stories)", [], {"Foo": [serial18, short2]}, volume_count=2)
+eq("flow R6 keeps R3: a 2-volume line never binds the 18-volume serial through the stripped name",
+   (ln_["pick"], "30092:volumes 18 > 4x 2" in ln_["rejected"]), (None, True))
+ln_, calls = flow("Foo (Collector's edition)", [], {}, volume_count=5)
+eq("flow R6: a stripped term with an empty page costs one search and binds nothing",
+   (ln_["pick"], calls), (None, [["Foo (Collector's edition)"], ["foo collector s edition"], ["Foo"]]))
+
 
 MUSHOKU_ALIASES = [
     "Mushoku Tensei", "Jobless Reincarnation", "List of Mushoku Tensei volumes",
