@@ -110,8 +110,8 @@ eq("R4 never replaces a candidate that passes the ceiling (Worst-shaped: 4 vols 
 m, via, _ = R.pick([{**syn, "id": 8, "volumes": 60, "popularity": 999}, {**syn, "id": 9, "volumes": 3}], "X", 3)
 eq("R4 never outranks a ceiling-passing synonym either", (m["id"], via), (9, "synonym"))
 m, via, rej = R.pick([{**serial, "volumes": 60}, {**syn, "id": 9, "volumes": 3}], "X", 3)
-eq("R4 after R1: the oversized primary IS the work, so its synonym carrier stays rejected and R4 binds the primary",
-   (m["id"], via, "9:synonym only (a primary-title candidate is on the page)" in rej), (2, "ceiling", True))
+eq("R4 never outranks a ceiling-passing synonym carrier, even one R1 rejected: nothing binds",
+   (m, via, "9:synonym only (a primary-title candidate is on the page)" in rej), (None, None, True))
 m, via, _ = R.pick([{**one_shot, "volumes": 60}], "X", 3)
 eq("R4: a ONE_SHOT is never bound, whatever its volumes", (m, via), (None, None))
 m, via, _ = R.pick([{**serial, "volumes": 1}, {**syn, "volumes": 60}], "X", 6)
