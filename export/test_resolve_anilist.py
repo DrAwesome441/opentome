@@ -29,6 +29,12 @@ def eq(label, got, want):
 eq("key: punctuation, case, spacing", R.key("Re:ZERO -Starting Life-"), "rezerostartinglife")
 eq("for_search: U+2019 -> '", R.for_search("Let\u2019s Do It Already!"), "Let's Do It Already!")
 eq("for_search: dashes + NBSP + spaces", R.for_search("A\u00a0\u2013 B  \u2014 C"), "A - B - C")
+# fix #5 (2026-09-24): diacritics fold in key() and for_search() (Fushigi Y\u00fbgi)
+eq("key folds diacritics", R.key("Fushigi Y\u00fbgi"), R.key("Fushigi Yugi"))
+eq("for_search folds diacritics", R.for_search("\u00dcbel Blatt"), "Ubel Blatt")
+eq("deslug of a folded name keeps the letter", R.deslug("Fushigi Y\u00fbgi"), "fushigi yugi")
+eq("KNOWN: NFKD + mark strip also drops kana voicing marks (ga == ka) -- flagged for Mangarr's mirror",
+   R.key("\u30ac"), R.key("\u30ab"))
 
 one_shot = {"id": 1, "format": "ONE_SHOT", "volumes": 1, "popularity": 9, "status": "FINISHED",
             "title": {"english": "X"}, "synonyms": []}
