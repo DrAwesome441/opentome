@@ -68,8 +68,9 @@ m, _, _ = R.pick([{**serial, "volumes": 9}], "X", 5)
 eq("larger within 4x passes (Erased: 9 tankobon vs 5 English 2-in-1 books)", m["id"], 2)
 m, _, _ = R.pick([{**serial, "volumes": 29}], "X", 15)
 eq("larger within 4x passes (Vinland Saga: 29 vs 15)", m["id"], 2)
-m, _, rej = R.pick([{**serial, "volumes": 63}], "X", 5)
-eq("larger than 4x the line rejects (63 vs 5)", (m, rej), (None, ["2:volumes 63 > 4x 5"]))
+m, via, rej = R.pick([{**serial, "volumes": 63}], "X", 5)
+eq("larger than 4x the line is rejected (63 vs 5) -- only R4's fallback tier then binds it",
+   ((m or {}).get("id"), via, rej), (2, "ceiling", ["2:volumes 63 > 4x 5"]))
 m, _, _ = R.pick([{**serial, "volumes": 20}], "X", 5)
 eq("exactly 4x passes (20 vs 5)", m["id"], 2)
 # R2 (the 2026-09-15 live run): no 4x ceiling for a line of 1-2 volumes -- a one-book release or a
@@ -78,8 +79,9 @@ m, _, _ = R.pick([{**serial, "volumes": 5}], "X", 1)
 eq("R2: a 1-volume line has no ceiling (Pupa: 5 vs 1)", m["id"], 2)
 m, _, _ = R.pick([{**serial, "volumes": 63}], "X", 2)
 eq("R2: a 2-volume line has no ceiling (63 vs 2)", m["id"], 2)
-m, _, rej = R.pick([{**serial, "volumes": 13}], "X", 3)
-eq("R2 stops at 3 volumes: 13 > 4x 3 rejects", (m, rej), (None, ["2:volumes 13 > 4x 3"]))
+m, via, rej = R.pick([{**serial, "volumes": 13}], "X", 3)
+eq("R2 stops at 3 volumes: 13 > 4x 3 is rejected (only R4's fallback tier then binds it)",
+   ((m or {}).get("id"), via, rej), (2, "ceiling", ["2:volumes 13 > 4x 3"]))
 m, via, _ = R.pick([{**serial, "volumes": 5, "popularity": 12000}, {**syn, "volumes": 1, "popularity": 300}], "X", 1)
 eq("R2 + primary over synonym: the tiny line binds the full serial, not the 1-volume carrier", (m["id"], via), (2, "primary"))
 # R3 (the 2026-09-15 live run): the lifted ceiling is for the line's OWN name (and its de-slugged
@@ -94,6 +96,87 @@ m, _, _ = R.pick([{**serial, "volumes": 34}], "X", 2, own_name=True)
 eq("R3 leaves the own-name exemption alone (34 vs 2 passes on the name)", m["id"], 2)
 m, _, _ = R.pick([{**serial, "volumes": 13}], "X", 3, own_name=False)
 eq("R3: a 3-volume line never had the exemption (13 > 4x 3 rejects on an alias term)", m, None)
+# R4 (Weed, 2026-09-24): an exact title match rejected SOLELY by the 4x ceiling binds when nothing
+# passed the ceiling -- a short English run of the full Japanese serial (Weed: 3 English volumes of
+# the 60-volume Ginga Densetsu Weed). Own-name terms only (R3), never over a ceiling-passing candidate.
+m, via, _ = R.pick([{**serial, "volumes": 60}], "X", 3)
+eq("R4: an exact primary rejected only by the ceiling binds when nothing else did (60 vs 3)", (m["id"], via), (2, "ceiling"))
+m, via, _ = R.pick([{**syn, "volumes": 60}], "X", 3)
+eq("R4: an exact synonym rejected only by the ceiling binds too", (m["id"], via), (3, "ceiling"))
+m, via, _ = R.pick([{**serial, "volumes": 60}], "X", 3, own_name=False)
+eq("R4 never fires on an alias term (R3 keeps the ceiling)", (m, via), (None, None))
+m, via, _ = R.pick([{**serial, "id": 31741, "volumes": 33}, {**serial, "id": 147044, "volumes": 4}], "X", 3)
+eq("R4 never replaces a candidate that passes the ceiling (Worst-shaped: 4 vols beats 33)", (m["id"], via), (147044, "primary"))
+m, via, _ = R.pick([{**syn, "id": 8, "volumes": 60, "popularity": 999}, {**syn, "id": 9, "volumes": 3}], "X", 3)
+eq("R4 never outranks a ceiling-passing synonym either", (m["id"], via), (9, "synonym"))
+m, via, rej = R.pick([{**serial, "volumes": 60}, {**syn, "id": 9, "volumes": 3}], "X", 3)
+eq("R4 never outranks a ceiling-passing synonym carrier, even one R1 rejected: nothing binds",
+   (m, via, "9:synonym only (a primary-title candidate is on the page)" in rej), (None, None, True))
+m, via, _ = R.pick([{**one_shot, "volumes": 60}], "X", 3)
+eq("R4: a ONE_SHOT is never bound, whatever its volumes", (m, via), (None, None))
+m, via, _ = R.pick([{**serial, "volumes": 1}, {**syn, "volumes": 60}], "X", 6)
+eq("R4 keeps R1: an oversized synonym carrier never wins beside a primary-title candidate",
+   (m, via), (None, None))
+m, via, _ = R.pick([{**serial, "title": {"english": "X Gaiden"}, "volumes": 60}], "X", 3)
+eq("R4 needs exact equality: a longer title rejected on the ceiling stays out", (m, via), (None, None))
+# R5 (2026-09-24): no equality anywhere on the page -> ONE candidate whose title key contains the
+# term's key (or sits inside it, shorter side >= 4) AND whose volumes equal the line's exactly binds.
+# The exact count does the real work: "It's Just Not My Night" (3) is "It's Just Not My Night: Tale
+# of a Fallen Vampire Queen" (3); "Ascendance of a Bookworm (Part 2: ...)" (4) is AniList's shorter
+# "Ascendance of a Bookworm: Part 2" (4).
+sub = {**serial, "id": 50, "volumes": 3, "title": {"english": "Night Shift: Tale of a Vampire"}}
+m, via, _ = R.pick([sub], "Night Shift", 3)
+eq("R5: the term inside a longer title, exact volumes, unique -> binds", (m["id"], via), (50, "substring"))
+m, via, _ = R.pick([{**sub, "title": {"english": "Night Shift"}}], "Night Shift (Part 2: The Dawn)", 3)
+eq("R5: a shorter title inside the term (the Bookworm Part N direction) -> binds", (m["id"], via), (50, "substring"))
+m, via, _ = R.pick([{**sub, "synonyms": ["Night Shift: Tale"], "title": {"english": "Yakin"}}], "Night Shift", 3)
+eq("R5 reads synonyms too", (m["id"], via), (50, "substring"))
+eq("R5 never fires on an alias term", R.pick([sub], "Night Shift", 3, own_name=False)[:2], (None, None))
+eq("R5 needs a unique candidate: two on the page -> nothing",
+   R.pick([sub, {**sub, "id": 51, "title": {"english": "Night Shift Zero"}}], "Night Shift", 3)[:2], (None, None))
+eq("R5 needs the exact count: off by one (4 vs 3) -> nothing", R.pick([{**sub, "volumes": 4}], "Night Shift", 3)[:2], (None, None))
+eq("R5 needs the exact count: off by one (2 vs 3) -> nothing", R.pick([{**sub, "volumes": 2}], "Night Shift", 3)[:2], (None, None))
+eq("R5 never compares null volumes", R.pick([{**sub, "volumes": None}], "Night Shift", 3)[:2], (None, None))
+eq("R5: a ONE_SHOT is never bound", R.pick([{**sub, "format": "ONE_SHOT"}], "Night Shift", 3)[:2], (None, None))
+eq("R5: the shorter side must be >= 4 characters ('Hou' inside 'Houseki')",
+   R.pick([{**sub, "title": {"english": "Houseki"}}], "Hou", 3)[:2], (None, None))
+eq("R5 does not fire beside an equal title rejected on volumes (Doll-shaped: the work, a disputed count)",
+   R.pick([{**serial, "id": 31566, "volumes": 1}, {**sub, "volumes": 6, "title": {"english": "X: IC in a X"}}], "X", 6)[:2],
+   (None, None))
+eq("R5 does not fire beside a same-named ONE_SHOT either",
+   R.pick([{**one_shot, "title": {"english": "Night Shift"}}, sub], "Night Shift", 3)[:2], (None, None))
+m, via, _ = R.pick([{**sub, "title": {"english": "Night Shift"}}, {**sub, "id": 51}], "Night Shift", 3)
+eq("R5 never outranks equality: the equal title wins, the substring one is ignored", (m["id"], via), (50, "primary"))
+# R7 (2026-09-24): equality after dropping one leading the / a / an from both sides, a tier below
+# exact equality ("Hollow Regalia" is AniList's "The Hollow Regalia")
+art = {**serial, "id": 70, "title": {"english": "The Night Shift"}}
+m, via, _ = R.pick([art], "Night Shift", 20)
+eq("R7: 'Night Shift' binds 'The Night Shift'", (m["id"], via), (70, "article"))
+m, via, _ = R.pick([{**art, "title": {"english": "Night Shift"}}], "A Night Shift", 20)
+eq("R7: the article on the term's side drops too", (m["id"], via), (70, "article"))
+m, via, _ = R.pick([art, {**serial, "id": 71, "title": {"english": "Night Shift"}}], "Night Shift", 20)
+eq("R7 never outranks exact equality", (m["id"], via), (71, "primary"))
+eq("R7: only a whole leading word is an article ('Theater' is not 'the ater')",
+   R.pick([{**art, "title": {"english": "Theater Night"}}], "ater Night", 19)[:2], (None, None))
+eq("R7 keeps the volume rule (1 vs 20)", R.pick([{**art, "volumes": 1}], "Night Shift", 20)[:2], (None, None))
+eq("R7 keeps ONE_SHOT out", R.pick([{**art, "format": "ONE_SHOT"}], "Night Shift", 20)[:2], (None, None))
+eq("R7 keeps R1: an article-equal synonym carrier never wins beside an article-equal primary rejected on volumes",
+   R.pick([{**art, "volumes": 1}, {**syn, "id": 72, "synonyms": ["The Night Shift"]}], "Night Shift", 20)[:2], (None, None))
+m, via, _ = R.pick([{**syn, "id": 72, "synonyms": ["The Night Shift"]}], "Night Shift", 20)
+eq("R7 reads synonyms (no primary-title candidate on the page)", (m["id"], via), (72, "article"))
+# R7 respects R1 ACROSS tiers (review, 2026-09-24): an exact primary-title candidate on the page -- even
+# one rejected on volumes, or a same-named ONE_SHOT -- is the work with a disputed count, so an
+# article-equal candidate beside it never binds; and R4 never binds an oversized exact title over an
+# article-equal candidate that passes the ceiling
+eq("R7 + R1 (Doll-shaped): 'Doll' 1 vol rejected on volumes beside 'The Doll' 6 vols -> nothing",
+   R.pick([{**serial, "id": 31566, "volumes": 1, "title": {"english": "Doll"}},
+           {**serial, "id": 80, "volumes": 6, "title": {"english": "The Doll"}}], "Doll", 6)[:2], (None, None))
+eq("R7 + R1: a 'Doll' ONE_SHOT beside 'The Doll' 6 vols -> nothing",
+   R.pick([{**one_shot, "title": {"english": "Doll"}},
+           {**serial, "id": 80, "volumes": 6, "title": {"english": "The Doll"}}], "Doll", 6)[:2], (None, None))
+eq("R4 + R7: an oversized 'Weed' (60) beside a 3-volume 'The Weed' -> nothing",
+   R.pick([{**serial, "id": 34010, "volumes": 60, "title": {"english": "Weed"}},
+           {**serial, "id": 81, "volumes": 3, "title": {"english": "The Weed"}}], "Weed", 3)[:2], (None, None))
 m, _, _ = R.pick([{**serial, "volumes": None}], "X", 63)
 eq("null volumes are never compared", m["id"], 2)
 eq("no equality -> no pick, no rejection", R.pick([serial], "Z", 20), (None, None, []))
@@ -168,6 +251,50 @@ big = {**serial, "id": 77, "volumes": 34, "title": {"english": "A1"}}
 ln_, calls = flow("Foo", ["A1"], {"Foo": [big]}, volume_count=2)
 eq("flow: R3 on the page-rank -- a 2-volume line's alias keeps the 4x ceiling against the name page",
    (ln_["pick"], calls), (None, [["Foo"], ["foo"], ["A1"]]))
+
+# R6 (2026-09-24): the name without a trailing edition-qualifier parenthetical is a retry term after
+# the de-slugged form, ranked like an alias (R3): "Inuyasha (VizBig edition)" -> "Inuyasha", but
+# "Sailor Moon (Shinsōban short stories)" (2 vols) must not bind the 18-volume serial through the
+# bare "Sailor Moon" -- the R3 failure again (its own entry is "Sailor Moon Short Stories", 2 vols).
+eq("R6: edition qualifier stripped", R.edition_stripped("Inuyasha (VizBig edition)"), "Inuyasha")
+eq("R6: version / release / tankobon / 2-in-1 are qualifiers",
+   [R.edition_stripped(n) for n in ("Yo-kai Watch (Noriyuki Konishi version)", "Tomie (Original release)",
+                                    "Arata: The Legend (Tank\u014dbon edition)", "Foo (2-in-1)", "Foo (Second printing)",
+                                    "Foo (Shins\u014dban)", "Foo (English-language volume list)")],
+   ["Yo-kai Watch", "Tomie", "Arata: The Legend", "Foo", "Foo", "Foo", "Foo"])
+eq("R6: an unclosed outer parenthetical goes too",
+   R.edition_stripped("Ranma \u00bd (2014 English release (2-in-1 Edition)"), "Ranma \u00bd")
+eq("R6: never an arc, a chapter list, a nested series or a plain subtitle",
+   [R.edition_stripped(n) for n in ("Re:Zero (Truth of Zero)", "The Wallflower (Chapter and volume list)",
+                                    "Foo (Manga series (2010 edition))", "Restaurant to Another World (First series)",
+                                    "Weed", "(Deluxe edition)")],
+   [None, None, None, None, None, None])
+eq("R6: never a parenthetical that quotes another work's title (straight or curly quotes)",
+   [R.edition_stripped(n) for n in ('Amazing Agent Luna ("Amazing Agent Jennifer" Volume list)',
+                                    "Amazing Agent Luna (\u201cAmazing Agent Jennifer\u201d Volume list)")],
+   [None, None])
+eq("R6: an apostrophe is not a quotation mark", R.edition_stripped("Marmalade Boy (Collector's edition)"), "Marmalade Boy")
+eq("retry order: de-slugged form, then the edition-stripped name, then the aliases",
+   R.retry_terms(dict(name="Blue Box (VizBig edition)", aliases=["Ao no Hako"])),
+   ["blue box vizbig edition", "Blue Box", "Ao no Hako"])
+inu = {**serial, "id": 30676, "volumes": 56, "title": {"english": "Foo"}}
+ln_, calls = flow("Foo (VizBig edition)", ["A1"], {"Foo": [inu]}, volume_count=18)
+eq("flow R6: the edition-stripped name is searched after the de-slugged form and binds via alias",
+   ((ln_["pick"] or {}).get("id"), ln_["via"], ln_["term"], calls),
+   (30676, "alias", "Foo", [["Foo (VizBig edition)"], ["foo vizbig edition"], ["Foo"]]))
+serial18 = {**serial, "id": 30092, "volumes": 18, "title": {"english": "Foo"}}
+short2 = {**serial, "id": 38552, "volumes": 2, "title": {"english": "Foo Short Stories"}}
+ln_, calls = flow("Foo (Shins\u014dban short stories)", [], {"Foo": [serial18, short2]}, volume_count=2)
+eq("flow R6 keeps R3: a 2-volume line never binds the 18-volume serial through the stripped name",
+   (ln_["pick"], "30092:volumes 18 > 4x 2" in ln_["rejected"]), (None, True))
+ln_, calls = flow("Foo (Collector's edition)", [], {}, volume_count=5)
+eq("flow R6: a stripped term with an empty page costs one search and binds nothing",
+   (ln_["pick"], calls), (None, [["Foo (Collector's edition)"], ["foo collector s edition"], ["Foo"]]))
+
+fb = {**serial, "id": 90, "volumes": 20, "title": {"english": "Foob Zero: The Beginning"}}
+ln_, calls = flow("Foob Zero", [], {"foob zero": [fb]}, volume_count=20)
+eq("flow: an R5 bind on the de-slugged page is reported as its tier, not 'alias'",
+   ((ln_["pick"] or {}).get("id"), ln_["via"], ln_["term"]), (90, "substring", "foob zero"))
 
 
 MUSHOKU_ALIASES = [
@@ -244,6 +371,38 @@ hm = line(80957137, "Attack on Titan: Harsh Mistress of the City", "manga", 2,
            "l attaque des titans", "進撃の巨人 隔絶都市の女王"])
 R.resolve([hm])
 eq("Harsh Mistress of the City resolves to nothing, never 53390", (hm["pick"], hm["via"]), (None, None))
+# the recorded `Weed` and `Worst` pages (the opentome-2026-09-24 wrong binds): Weed (3 EN volumes)
+# has only oversized exact matches on its name page -- 34010 "Ginga Densetsu WEED" (60 vols, synonym
+# "WEED") and the 30-volume Orion spin-off, which never key-equals "weed" -- so R4 binds 34010. Worst
+# (3 EN volumes) has 147044 "Worst" (4 vols) passing the ceiling, so R4 must NOT move it to 31741 (33
+# vols, the right work) -- that one is corrections/anilist.json's pin, not a rule.
+m, via, rej = R.pick(page("Weed"), "Weed", 3)
+eq("Weed page: 34010 via the ceiling tier (synonym WEED); 45785 Orion rejected past the ceiling, never bound",
+   ((m or {}).get("id"), via, "45785:volumes 30 > 4x 3" in rej), (34010, "ceiling", True))
+m, via, _ = R.pick(page("Weed"), "Weed", 3, own_name=False)
+eq("Weed page as an alias term: nothing (R3)", (m, via), (None, None))
+m, via, _ = R.pick(page("Worst"), "Worst", 3)
+eq("Worst page: 147044 stays (it passes the ceiling); R4 does not fire", ((m or {}).get("id"), via), (147044, "primary"))
+wd = line(1868367905, "Weed", "manga", 3, ["Weed", "Ginga Dendetsu Weed", "Ginga Densetsu WEED"])
+R.resolve([wd])
+eq("Weed line: binds 34010 from its name page, before any alias search",
+   ((wd["pick"] or {}).get("id"), wd["via"], wd["term"]), (34010, "ceiling", "Weed"))
+
+# the recorded Ascendance of a Bookworm light-novel pages (R5, both directions): AniList lists the
+# novel per Part, so the base line (3 volumes) is "Part 1" (87383, 3 vols) and the catalogue's
+# "(Part 2: Apprentice Shrine Maiden)" line (4) is the SHORTER "Ascendance of a Bookworm: Part 2"
+# (110800, 4). Every Part is on the base page; only the exact count picks one.
+m, via, _ = R.pick(page("Ascendance of a Bookworm", novel=True), "Ascendance of a Bookworm", 3)
+eq("Bookworm page: the 3-volume base line binds Part 1 (87383) by its exact count", ((m or {}).get("id"), via), (87383, "substring"))
+m, via, _ = R.pick(page("Ascendance of a Bookworm", novel=True), "Ascendance of a Bookworm", 6)
+eq("Bookworm page: a count no Part has (6) binds nothing", (m, via), (None, None))
+t2 = "Ascendance of a Bookworm (Part 2: Apprentice Shrine Maiden)"
+m, via, _ = R.pick(page(t2, novel=True), t2, 4)
+eq("Bookworm Part 2 page: 110800 'Ascendance of a Bookworm: Part 2' (shorter than the term)", ((m or {}).get("id"), via), (110800, "substring"))
+
+m, via, _ = R.pick(page("Hollow Regalia", novel=True), "Hollow Regalia", 6)
+eq("Hollow Regalia page: 133016 'The Hollow Regalia' via the article tier (R7)", ((m or {}).get("id"), via), (133016, "article"))
+
 # the `Re:Zero` search page itself (recorded): three entries carry the synonym `ReZero`; only the
 # arc with an unknown volume count survives the one-sided rule against the line's 11
 m, via, rej = R.pick(page("Re:Zero"), "Re:Zero", 11)
