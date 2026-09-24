@@ -201,6 +201,14 @@ eq("alias terms: dedupe by key, skip the name and list articles, never capped (o
    R.alias_terms("Fairy Tail", ["Fairy Tail", "List of Fairy Tail volumes", "Feari Teiru", "feari teiru",
                                 "Fairy Tail (anime)", "Plot of Fairy Tail", "A", "B", "C", "D", "E", "F"]),
    ["Feari Teiru", "Fairy Tail (anime)", "A", "B", "C", "D", "E", "F"])
+# the seen seed (2026-09-24, the Fushigi Yugi trace): the exporter's ASCII alias row of an accented
+# name ("fushigi y gi") is the name, not a fresh search that burns one of ALIAS_LIMIT's slots
+eq("alias terms: the name's stored ASCII normalize() row is skipped",
+   R.alias_terms("Fushigi Yûgi", ["Fushigi Yûgi", "fushigi y gi", "Curious Play"]), ["Curious Play"])
+from to_mangarr import normalize  # noqa: E402
+eq("ascii_normalize() is the exporter's normalize()",
+   [R.ascii_normalize(x) for x in ("Fushigi Yûgi", "Let’s Do It!", " Ranma ½ ", "Ⅰ Ａ")],
+   [normalize(x) for x in ("Fushigi Yûgi", "Let’s Do It!", " Ranma ½ ", "Ⅰ Ａ")])
 eq("deslug: Mangarr's de-slugged foreign id form", R.deslug("Let\u2019s Do It Already!"), "let s do it already")
 eq("deslug keeps the name's key", R.key(R.deslug("Re:Zero (The Sanctuary and the Witch of Greed)")),
    R.key("Re:Zero (The Sanctuary and the Witch of Greed)"))
