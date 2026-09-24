@@ -299,6 +299,24 @@ eq("R6: never a parenthetical that quotes another work's title (straight or curl
                                     "Amazing Agent Luna (\u201cAmazing Agent Jennifer\u201d Volume list)")],
    [None, None])
 eq("R6: an apostrophe is not a quotation mark", R.edition_stripped("Marmalade Boy (Collector's edition)"), "Marmalade Boy")
+# R6+ (round 2, 2026-09-24): Wikipedia's collection / list-article headings, an unclosed trailing
+# parenthetical and a bare trailing "volumes" heading; "(@comic volumes)" is a spin-off, not an edition
+eq("R6+: omnibus / perfect collection / publication / list of / manga list / overview / original manga / "
+   "bunko / aizoban / kanzenban / deluxe / volumes are qualifiers",
+   [R.edition_stripped("Foo (%s)" % q) for q in ("Omnibus", "Perfect Collection", "English publication", "List of books",
+                                                 "Manga List", "Overview", "Original manga", "Bunko", "Aizōban",
+                                                 "Kanzenban", "Deluxe", "Dark Horse volumes")], ["Foo"] * 12)
+eq("R6+: an unclosed trailing parenthetical goes (Saiyuki (Enix Edition)",
+   [R.edition_stripped(n) for n in ("Saiyuki (Enix Edition", "Jihai (Manga (volumes)")], ["Saiyuki", "Jihai"])
+eq("R6+: a bare trailing 'volumes' / 'volume list' heading goes, only without parentheses",
+   [R.edition_stripped(n) for n in ("Gunsmith Cats Burst volumes", "Blue Lock: Episode Nagi volumes", "Days volume list",
+                                    '"Amazing Agent Luna" Volume list', "Foo (Bar) volumes")],
+   ["Gunsmith Cats Burst", "Blue Lock: Episode Nagi", "Days", "Amazing Agent Luna", None])
+eq("R6+ keeps the guards: '@comic volumes', a chapter list, a nested series (even unspaced after the fold), an arc",
+   [R.edition_stripped(n) for n in ("My Youth Romantic Comedy Is Wrong, As I Expected (@comic volumes)",
+                                    "Foo (Chapter and volume list)", "The Kindaichi Case Files (File series (27 volumes/19 files)",
+                                    "A Certain Magical Index: New Testament (2011–2019", "Re:Zero (Truth of Zero)")],
+   [None] * 5)
 eq("retry order: de-slugged form, then the edition-stripped name, then the aliases",
    R.retry_terms(dict(name="Blue Box (VizBig edition)", aliases=["Ao no Hako"])),
    ["blue box vizbig edition", "Blue Box", "Ao no Hako"])
