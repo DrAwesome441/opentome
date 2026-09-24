@@ -322,6 +322,93 @@ eq("flow: an R5 bind on the de-slugged page is reported as its tier, not 'alias'
    ((ln_["pick"] or {}).get("id"), ln_["via"], ln_["term"]), (90, "substring", "foob zero"))
 
 
+# ---- the POST-WALK tiers (post_walk(), 2026-09-24 round 2): only a line the whole walk left
+# unbound, only the pages the walk already fetched (zero new queries), V1 -> V2 -> V3 -> V4 ---------
+def pw(name, vc, orig, pages, medium="manga"):
+    ln = line(1, name, medium, vc, [])
+    ln["orig_vc"] = orig
+    return R.post_walk_pick(ln, pages)[:2]
+
+
+def pwid(name, vc, orig, pages, medium="manga"):
+    m, via = pw(name, vc, orig, pages, medium)
+    return ((m or {}).get("id"), via)
+
+
+tail = {**serial, "id": 60, "volumes": None, "title": {"english": "Night Shift: Tale of a Vampire"}}
+# V1 prefix
+eq("V1: a bare name that heads AniList's full title binds (null volumes)",
+   pwid("Night Shift", 5, None, [("Night Shift", [tail], True)]), (60, "prefix"))
+eq("V1: word boundary ('Night Shifts ...' is not 'Night Shift' + a subtitle)",
+   pw("Night Shift", 5, None, [("Night Shift", [{**tail, "title": {"english": "Night Shifts Forever"}}], True)]), (None, None))
+eq("V1: gate -- a line of 1-2 volumes never binds by prefix",
+   pw("Night Shift", 2, None, [("Night Shift", [tail], True)]), (None, None))
+eq("V1: bare names only -- a parenthetical or a cut in the name is out",
+   [pw(n, 5, None, [(n, [tail], True)]) for n in ("Night Shift (Omnibus)", "Night Shift: Dawn")], [(None, None)] * 2)
+eq("V1: nothing title-equal on the page, even a rejected one (1 vol vs 5)",
+   pw("Night Shift", 5, None, [("Night Shift", [tail, {**serial, "id": 61, "volumes": 1, "title": {"english": "Night Shift"}}], True)]),
+   (None, None))
+eq("V1: AniList's count may not be smaller than the line's (3 vs 5)",
+   pw("Night Shift", 5, None, [("Night Shift", [{**tail, "volumes": 3}], True)]), (None, None))
+eq("V1: own-name pages only (an alias page is out)", pw("Night Shift", 5, None, [("Night Shift", [tail], False)]), (None, None))
+eq("V1: the term's key must be >= 6 characters", pw("Night", 5, None, [("Night", [{**tail, "title": {"english": "Night: X"}}], True)]),
+   (None, None))
+eq("V1: never a ONE_SHOT", pw("Night Shift", 5, None, [("Night Shift", [{**tail, "format": "ONE_SHOT"}], True)]), (None, None))
+# V2 arc
+arc_c = {**serial, "id": 62, "volumes": 11, "title": {"english": "Foob Chapter 3: Truth of Foob"}}
+eq("arc_parts: base before the first cut, arc without its parentheses; an edition qualifier is no arc",
+   [R.arc_parts(n) for n in ("Re:Zero (Truth of Zero)", "Mars: Horse With No Name", "Jiraishin (English Tokyopop release)", "Foo")],
+   [("Re:Zero", "Truth of Zero"), ("Mars", "Horse With No Name"), ("Jiraishin", None), ("Foo", None)])
+eq("V2: base AND arc inside one title, AniList count = the line's",
+   pwid("Foob (Truth of Foob)", 11, None, [("Foob (Truth of Foob)", [arc_c], True)]), (62, "arc"))
+eq("V2: ... or = the (different) origin line's (3 English, 6 Japanese)",
+   pwid("Foob (Truth of Foob)", 3, 6, [("Foob (Truth of Foob)", [{**arc_c, "volumes": 6}], True)]), (62, "arc"))
+eq("V2: any other count, or a null one, binds nothing",
+   [pw("Foob (Truth of Foob)", 11, None, [("x", [{**arc_c, "volumes": v}], True)]) for v in (10, None)], [(None, None)] * 2)
+eq("V2: the arc part is mandatory -- base-only containment never binds",
+   pw("Foob (Truth of Foob)", 11, None, [("x", [{**arc_c, "title": {"english": "Foob Diablo"}}], True)]), (None, None))
+eq("V2: unique candidate only",
+   pw("Foob (Truth of Foob)", 11, None, [("x", [arc_c, {**arc_c, "id": 63}], True)]), (None, None))
+# V3 amp
+amp_c = {**serial, "id": 64, "volumes": 3, "title": {"english": "Kiss and Fly"}}
+eq("V3: '&' in the term = 'and' in a primary title", pwid("Kiss & Fly", 3, None, [("Kiss & Fly", [amp_c], True)]), (64, "amp"))
+eq("V3: 'and' in the term = '&' in a primary title",
+   pwid("Kiss and Fly", 3, None, [("Kiss and Fly", [{**amp_c, "title": {"english": "Kiss & Fly"}}], True)]), (64, "amp"))
+eq("V3: primary titles only -- a synonym carrier never binds (Shino & Ren's '...: Future')",
+   pw("Kiss & Fly", 2, None, [("Kiss & Fly", [{**amp_c, "title": {"english": "Kiss & Fly: Future"}, "synonyms": ["Kiss and Fly"]}], True)]),
+   (None, None))
+eq("V3: never beside an exact title (a rejected one included)",
+   pw("Kiss & Fly", 3, None, [("Kiss & Fly", [amp_c, {**serial, "id": 65, "volumes": 30, "title": {"english": "Kiss & Fly"}}], True)]),
+   (None, None))
+eq("V3 keeps the volume rule (1 vs 20)", pw("Kiss & Fly", 20, None, [("Kiss & Fly", [{**amp_c, "volumes": 1}], True)]), (None, None))
+# V4 origin
+ori = {**serial, "id": 66, "volumes": 19, "title": {"english": "Bar"}}
+eq("V4: a retry term's equal title rejected only by the ceiling, AniList count = the origin line's",
+   pwid("Bar (English release)", 3, 19, [("Bar (English release)", [], True), ("Bar", [ori], False)]), (66, "origin"))
+eq("V4: never on the name page", pw("Bar", 3, 19, [("Bar", [ori], True)]), (None, None))
+eq("V4: gate -- a line of 1-2 volumes never binds (Angel Beats! Related media)",
+   pw("Bar (English release)", 2, 19, [("x", [], True), ("Bar", [ori], False)]), (None, None))
+eq("V4: the count must be the origin line's (18 vs 19)",
+   pw("Bar (English release)", 3, 19, [("x", [], True), ("Bar", [{**ori, "volumes": 18}], False)]), (None, None))
+eq("V4: only a count past the ceiling (10 <= 4x 3 would have passed the volume rule)",
+   pw("Bar (English release)", 3, 10, [("x", [], True), ("Bar", [{**ori, "volumes": 10}], False)]), (None, None))
+_db = sqlite3.connect(":memory:")
+_db.execute("CREATE TABLE series (gcd_series_id INTEGER, name TEXT, medium TEXT, volume_count INTEGER, anilist_id INTEGER, orig_series_id INTEGER)")
+_db.execute("CREATE TABLE series_alias (gcd_series_id INTEGER, alias TEXT)")
+_db.executemany("INSERT INTO series VALUES (?,?,?,?,?,?)",
+                [(1, "Bar (English release)", "manga", 3, None, 2), (2, "Bar", "manga", 19, None, 2), (3, "Baz", "manga", 4, None, None)])
+eq("load_line: orig_vc is the origin line's count, never the line's own (a JP line is its own origin)",
+   [R.load_line(_db, i)["orig_vc"] for i in (1, 2, 3)], [19, None, None])
+# the walk: post_walk() adds no search and never pre-empts a walk tier
+ln_, calls = flow("Night Shift", ["A1"], {"Night Shift": [tail]}, volume_count=5)
+eq("flow post-walk: binds by prefix after the whole walk, with exactly the walk's searches",
+   ((ln_["pick"] or {}).get("id"), ln_["via"], calls), (60, "prefix", [["Night Shift"], ["night shift"], ["A1"]]))
+ln_, calls = flow("Night Shift", ["Yakin"], {"Night Shift": [tail], "Yakin": [{**serial, "id": 67, "title": {"english": "Yakin"}}]},
+                  volume_count=5)
+eq("flow post-walk: an alias bind of the walk wins over a prefix candidate on the name page",
+   ((ln_["pick"] or {}).get("id"), ln_["via"]), (67, "alias"))
+
+
 # ---- the DISPLAY-ONLY fallback (display(), 2026-09-24): never a binding ---------------------
 def display_db(rows, pages):
     """In-memory artifact rows (sid, name, language, medium, volume_count, anilist_id, work);
@@ -479,6 +566,43 @@ eq("Bookworm Part 2 page: 110800 'Ascendance of a Bookworm: Part 2' (shorter tha
 
 m, via, _ = R.pick(page("Hollow Regalia", novel=True), "Hollow Regalia", 6)
 eq("Hollow Regalia page: 133016 'The Hollow Regalia' via the article tier (R7)", ((m or {}).get("id"), via), (133016, "article"))
+
+# the recorded post-walk pages (round 2, 2026-09-24): the measured binds and the analyst's negatives
+own = lambda t, novel=False: (t, page(t, novel), True)
+retry = lambda t, novel=False: (t, page(t, novel), False)
+eq("V1 recorded: Even Dogs Go to Other Worlds (6) -> 133396 '...: Life in Another World with My Beloved Hound'",
+   pwid("Even Dogs Go to Other Worlds", 6, 7, [own("Even Dogs Go to Other Worlds")]), (133396, "prefix"))
+eq("V1 recorded: Kase-san (10) binds nothing -- two titles start 'Kase-san ...', counted BEFORE the volume rule",
+   pw("Kase-san", 10, 10, [own("Kase-san")]), (None, None))
+eq("V1 recorded: (after the volume rule only 'Kase-san and Yamada' would be left -- the wrong bind)",
+   [m["id"] for m in page("Kase-san") if R.volumes_pass(m, 10, True)
+    and any(R._words(x).startswith("kase san ") for x in R._titles(m))], [98777])
+eq("V1 recorded: Your Name (novel, 2) binds nothing -- the gate, and 'Another Side: Earthbound' (1) is smaller than the line",
+   [pw("Your Name", vc, 2, [own("Your Name", True)], "novel") for vc in (2, 3)], [(None, None)] * 2)
+eq("V1/V3 recorded: Shino & Ren (LN, 1) binds nothing -- 189694 'Shino & Ren: Future' (synonym 'Shino and Ren')",
+   pw("Shino & Ren", 1, 2, [own("Shino & Ren", True)], "light_novel"), (None, None))
+eq("V2 recorded: Umineko (Alliance of the Golden Witch) (3) -> 46144 Episode 4 (6 = the JP line's 6)",
+   pwid("Umineko When They Cry (Alliance of the Golden Witch)", 3, 6,
+        [own("Umineko When They Cry (Alliance of the Golden Witch)")]), (46144, "arc"))
+eq("V2 recorded: Madoka Magica (Side Story) (8, JP 13) binds nothing -- Magia Record has no count",
+   pw("Puella Magi Madoka Magica (Side Story)", 8, 13, [own("Puella Magi Madoka Magica (Side Story)")]), (None, None))
+eq("V2 recorded: Index NT (LN 6, JP 22) never binds the 22-volume Index 42854 on the base page (the arc is mandatory)",
+   pw("A Certain Magical Index: New Testament (2011–2019", 6, 22, [retry("A Certain Magical Index", True)], "light_novel"),
+   (None, None))
+eq("V3 recorded: Sword Art Online: Kiss & Fly (3) -> 117061 'Sword Art Online: Kiss and Fly'",
+   pwid("Sword Art Online: Kiss & Fly", 3, 3, [own("Sword Art Online: Kiss & Fly")]), (117061, "amp"))
+eq("V3 recorded: Ghost & Witch (3) -> 139107 'Ghost and Witch'", pwid("Ghost & Witch", 3, 3, [own("Ghost & Witch")]), (139107, "amp"))
+jir = [own("Jiraishin (English Tokyopop release)"), retry("Jiraishin")]
+eq("V4 recorded: Jiraishin (English Tokyopop release) (3, JP 19) -> 30379 'Jiraishin' (19), never Jiraishin Diablo 40444 (3)",
+   pwid("Jiraishin (English Tokyopop release)", 3, 19, jir), (30379, "origin"))
+eq("V2 recorded: ... and V2 alone never binds Diablo (the edition-qualified name has no arc)",
+   pw("Jiraishin (English Tokyopop release)", 3, None, jir), (None, None))
+eq("V4 recorded: Crayon Shin-chan - English - CMX (11, JP 50) -> 32435 (50) on the alias page 'Crayon Shin Chan'",
+   pwid("Crayon Shin-chan - English - CMX", 11, 50, [own("Crayon Shin-chan - English - CMX"), retry("Crayon Shin Chan")]),
+   (32435, "origin"))
+eq("V4 recorded: Angel Beats! (Related media) (1, JP 11) never binds 49671 Heaven's Door (the gate)",
+   pw("Angel Beats! (Related media)", 1, 11,
+      [own("Angel Beats! (Related media)"), retry("Angel Beats! Heaven's Door")]), (None, None))
 
 # the `Re:Zero` search page itself (recorded): three entries carry the synonym `ReZero`; only the
 # arc with an unknown volume count survives the one-sided rule against the line's 11
