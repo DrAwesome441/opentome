@@ -119,6 +119,34 @@ eq("R4 keeps R1: an oversized synonym carrier never wins beside a primary-title 
    (m, via), (None, None))
 m, via, _ = R.pick([{**serial, "title": {"english": "X Gaiden"}, "volumes": 60}], "X", 3)
 eq("R4 needs exact equality: a longer title rejected on the ceiling stays out", (m, via), (None, None))
+# R5 (2026-09-24): no equality anywhere on the page -> ONE candidate whose title key contains the
+# term's key (or sits inside it, shorter side >= 4) AND whose volumes equal the line's exactly binds.
+# The exact count does the real work: "It's Just Not My Night" (3) is "It's Just Not My Night: Tale
+# of a Fallen Vampire Queen" (3); "Ascendance of a Bookworm (Part 2: ...)" (4) is AniList's shorter
+# "Ascendance of a Bookworm: Part 2" (4).
+sub = {**serial, "id": 50, "volumes": 3, "title": {"english": "Night Shift: Tale of a Vampire"}}
+m, via, _ = R.pick([sub], "Night Shift", 3)
+eq("R5: the term inside a longer title, exact volumes, unique -> binds", (m["id"], via), (50, "substring"))
+m, via, _ = R.pick([{**sub, "title": {"english": "Night Shift"}}], "Night Shift (Part 2: The Dawn)", 3)
+eq("R5: a shorter title inside the term (the Bookworm Part N direction) -> binds", (m["id"], via), (50, "substring"))
+m, via, _ = R.pick([{**sub, "synonyms": ["Night Shift: Tale"], "title": {"english": "Yakin"}}], "Night Shift", 3)
+eq("R5 reads synonyms too", (m["id"], via), (50, "substring"))
+eq("R5 never fires on an alias term", R.pick([sub], "Night Shift", 3, own_name=False)[:2], (None, None))
+eq("R5 needs a unique candidate: two on the page -> nothing",
+   R.pick([sub, {**sub, "id": 51, "title": {"english": "Night Shift Zero"}}], "Night Shift", 3)[:2], (None, None))
+eq("R5 needs the exact count: off by one (4 vs 3) -> nothing", R.pick([{**sub, "volumes": 4}], "Night Shift", 3)[:2], (None, None))
+eq("R5 needs the exact count: off by one (2 vs 3) -> nothing", R.pick([{**sub, "volumes": 2}], "Night Shift", 3)[:2], (None, None))
+eq("R5 never compares null volumes", R.pick([{**sub, "volumes": None}], "Night Shift", 3)[:2], (None, None))
+eq("R5: a ONE_SHOT is never bound", R.pick([{**sub, "format": "ONE_SHOT"}], "Night Shift", 3)[:2], (None, None))
+eq("R5: the shorter side must be >= 4 characters ('Hou' inside 'Houseki')",
+   R.pick([{**sub, "title": {"english": "Houseki"}}], "Hou", 3)[:2], (None, None))
+eq("R5 does not fire beside an equal title rejected on volumes (Doll-shaped: the work, a disputed count)",
+   R.pick([{**serial, "id": 31566, "volumes": 1}, {**sub, "volumes": 6, "title": {"english": "X: IC in a X"}}], "X", 6)[:2],
+   (None, None))
+eq("R5 does not fire beside a same-named ONE_SHOT either",
+   R.pick([{**one_shot, "title": {"english": "Night Shift"}}, sub], "Night Shift", 3)[:2], (None, None))
+m, via, _ = R.pick([{**sub, "title": {"english": "Night Shift"}}, {**sub, "id": 51}], "Night Shift", 3)
+eq("R5 never outranks equality: the equal title wins, the substring one is ignored", (m["id"], via), (50, "primary"))
 m, _, _ = R.pick([{**serial, "volumes": None}], "X", 63)
 eq("null volumes are never compared", m["id"], 2)
 eq("no equality -> no pick, no rejection", R.pick([serial], "Z", 20), (None, None, []))
@@ -285,6 +313,18 @@ wd = line(1868367905, "Weed", "manga", 3, ["Weed", "Ginga Dendetsu Weed", "Ginga
 R.resolve([wd])
 eq("Weed line: binds 34010 from its name page, before any alias search",
    ((wd["pick"] or {}).get("id"), wd["via"], wd["term"]), (34010, "ceiling", "Weed"))
+
+# the recorded Ascendance of a Bookworm light-novel pages (R5, both directions): AniList lists the
+# novel per Part, so the base line (3 volumes) is "Part 1" (87383, 3 vols) and the catalogue's
+# "(Part 2: Apprentice Shrine Maiden)" line (4) is the SHORTER "Ascendance of a Bookworm: Part 2"
+# (110800, 4). Every Part is on the base page; only the exact count picks one.
+m, via, _ = R.pick(page("Ascendance of a Bookworm", novel=True), "Ascendance of a Bookworm", 3)
+eq("Bookworm page: the 3-volume base line binds Part 1 (87383) by its exact count", ((m or {}).get("id"), via), (87383, "substring"))
+m, via, _ = R.pick(page("Ascendance of a Bookworm", novel=True), "Ascendance of a Bookworm", 6)
+eq("Bookworm page: a count no Part has (6) binds nothing", (m, via), (None, None))
+t2 = "Ascendance of a Bookworm (Part 2: Apprentice Shrine Maiden)"
+m, via, _ = R.pick(page(t2, novel=True), t2, 4)
+eq("Bookworm Part 2 page: 110800 'Ascendance of a Bookworm: Part 2' (shorter than the term)", ((m or {}).get("id"), via), (110800, "substring"))
 
 # the `Re:Zero` search page itself (recorded): three entries carry the synonym `ReZero`; only the
 # arc with an unknown volume count survives the one-sided rule against the line's 11
