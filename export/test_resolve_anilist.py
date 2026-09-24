@@ -297,6 +297,58 @@ eq("flow: an R5 bind on the de-slugged page is reported as its tier, not 'alias'
    ((ln_["pick"] or {}).get("id"), ln_["via"], ln_["term"]), (90, "substring", "foob zero"))
 
 
+# ---- the DISPLAY-ONLY fallback (display(), 2026-09-24): never a binding ---------------------
+def display_db(rows, pages):
+    """In-memory artifact rows (sid, name, language, medium, volume_count, anilist_id, work);
+    search() answers from pages[(term, novel)] and records every term it is asked for."""
+    db = sqlite3.connect(":memory:")
+    db.execute("""CREATE TABLE series (gcd_series_id INTEGER PRIMARY KEY, name TEXT, language TEXT,
+                  medium TEXT, volume_count INTEGER, anilist_id INTEGER, tome_work_id TEXT,
+                  display_anilist_id INTEGER, display_anilist_via TEXT)""")
+    db.executemany("INSERT INTO series VALUES (?,?,?,?,?,?,?,NULL,NULL)", rows)
+    db.execute("UPDATE series SET display_anilist_id=999, display_anilist_via='parent' WHERE gcd_series_id=9")
+    asked, real = [], R.search
+    R.search = lambda terms, novel: (asked.append((sorted(terms), novel)),
+                                     {t: list(pages.get((t, novel), [])) for t in terms})[1]
+    try:
+        by = R.display(db)
+    finally:
+        R.search = real
+    got = {sid: (aid, via) for sid, aid, via in db.execute(
+        "SELECT gcd_series_id, display_anilist_id, display_anilist_via FROM series WHERE display_anilist_id IS NOT NULL")}
+    ids = dict(db.execute("SELECT gcd_series_id, anilist_id FROM series"))
+    return by, got, ids, asked
+
+
+eq("parent_name: the first ' (' / ': ' / ' - ' / ' / ' cut, en dash as ' - ', None without one",
+   [R.parent_name(n) for n in ("Re:Zero (Truth of Zero)", "Foo: Bar (Baz)", "Foo – Bar", "Foo / Bar",
+                               "Re:Zero", "Bungo Stray Dogs")],
+   ["Re:Zero", "Foo", "Foo", "Foo", None, None])
+adapt = {**serial, "id": 700, "volumes": None, "title": {"english": "Novela"}}
+by, got, ids, asked = display_db([
+    (1, "Foo", "en", "light_novel", 20, 100, "w1"),            # bound parent (a novel)
+    (2, "Foo (Truth of Foo)", "en", "manga", 3, None, "w1"),    # arc, other medium -> parent 100
+    (3, "Foo: Side Story", "en", "manga", 2, None, "w2"),       # same name, OTHER work -> nothing
+    (4, "Bar", "en", "manga", 10, 200, "w3"),
+    (5, "Bar", "en", "light_novel", 10, 201, "w3"),
+    (6, "Bar (Episode Lyu)", "en", "manga", 3, None, "w3"),     # two bound 'Bar' ids -> ambiguous
+    (7, "Novela", "en", "novel", 4, None, "w4"),               # medium: AniList has the adaptation
+    (8, "Novela", "en", "manga", 4, None, "w5"),               # a manga line never gets 'medium'
+    (9, "Pinned (Arc)", "en", "manga", 3, 555, "w6"),          # bound (a pin): a stale display id goes
+    (10, "Foo (Truth of Foo)", "fr", "manga", 3, None, "w1"),  # never a non-EN line
+    (11, "Twin", "en", "light_novel", 20, None, "w7"),         # its novel page has an equal NOVEL entry
+    (12, "Twin", "en", "manga", 3, 300, "w7"),                 # rejected (1 vs 20): no 'medium'; no cut, no parent
+], {("Novela", False): [adapt], ("Twin", True): [{**serial, "id": 301, "format": "NOVEL", "volumes": 1,
+                                                  "title": {"english": "Twin"}}],
+    ("Twin", False): [{**serial, "id": 300, "volumes": None, "title": {"english": "Twin"}}]})
+eq("display: parent across mediums in the same work, medium for the novel only, nothing else",
+   (got, by), ({2: (100, "parent"), 7: (700, "medium")}, {"parent": 1, "medium": 1}))
+eq("display: anilist_id is never written", ids,
+   {1: 100, 2: None, 3: None, 4: 200, 5: 201, 6: None, 7: None, 8: None, 9: 555, 10: None, 11: None, 12: 300})
+eq("display: one search per page family, only the unbound EN novel lines without a parent candidate",
+   asked, [(["Novela", "Twin"], True), (["Novela", "Twin"], False)])
+
+
 MUSHOKU_ALIASES = [
     "Mushoku Tensei", "Jobless Reincarnation", "List of Mushoku Tensei volumes",
     "Mushoku Tensei: Jobless Reincarnation", "mushoku tensei jobless reincarnation",
