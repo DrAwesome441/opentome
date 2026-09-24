@@ -29,6 +29,23 @@ def eq(label, got, want):
 eq("key: punctuation, case, spacing", R.key("Re:ZERO -Starting Life-"), "rezerostartinglife")
 eq("for_search: U+2019 -> '", R.for_search("Let\u2019s Do It Already!"), "Let's Do It Already!")
 eq("for_search: dashes + NBSP + spaces", R.for_search("A\u00a0\u2013 B  \u2014 C"), "A - B - C")
+# the Latin-only accent strip (2026-09-24; the broad NFKD fold it replaces was reverted): a mark
+# goes only with a Latin base letter, everything else comes back byte for byte
+for raw, want in [("Fushigi Y\u00fbgi", "Fushigi Yugi"), ("\u00dcbel Blatt", "Ubel Blatt"), ("Saintia Sh\u014d", "Saintia Sho"),
+                  ("\u014coku", "Ooku"), ("Bak\u00e9Gyamon", "BakeGyamon"), ("W\u0101qw\u0101q", "Waqwaq"),
+                  ("Vi\u1ec7t", "Viet"), ("u\u0302x", "ux")]:
+    eq("for_search strips the Latin accent: %r" % raw, R.for_search(raw), want)
+for raw in ["\u30b2\u30fc\u30e0", "\u30d1\u30f3", "\ud55c\uad6d\uc5b4", "\u0439", "1\u0302", " \u0302x", "\uf900"]:
+    eq("fold leaves a non-Latin base's marks alone: %r" % raw, R.fold(raw), raw)
+eq("key: an accented title and its ASCII spelling are one key", R.key("Fushigi Y\u00fbgi"), R.key("Fushigi Yugi"))
+eq("key: kana voicing marks still count (\u30ac != \u30ab)", R.key("\u30ac") != R.key("\u30ab"), True)
+eq("deslug of an accented name keeps the letter", R.deslug("Fushigi Y\u00fbgi"), "fushigi yugi")
+# the numeric-symbol fold: No / Nl only, NFKC per character, the fraction slash -> "/" (AniList's "Ranma 1/2")
+for raw, want in [("Ranma \u00bd", "Ranma 1/2"), ("Ranma \u00b9\u2044\u2082", "Ranma 1/2"), ("\u2161", "II"), ("x\u00b2", "x2"), ("\u2460", "1")]:
+    eq("for_search folds the numeric symbol: %r" % raw, R.for_search(raw), want)
+eq("key: Ranma \u00bd = Ranma 1/2 = Ranma \u00b9\u2044\u2082", {R.key("Ranma \u00bd"), R.key("Ranma 1/2"), R.key("Ranma \u00b9\u2044\u2082")}, {"ranma12"})
+for raw in ["\uff32\uff41\uff4e\uff4d\uff41", "\ufb01"]:
+    eq("fold leaves full-width / ligatures alone: %r" % raw, R.fold(raw), raw)
 
 one_shot = {"id": 1, "format": "ONE_SHOT", "volumes": 1, "popularity": 9, "status": "FINISHED",
             "title": {"english": "X"}, "synonyms": []}
@@ -184,6 +201,14 @@ eq("alias terms: dedupe by key, skip the name and list articles, never capped (o
    R.alias_terms("Fairy Tail", ["Fairy Tail", "List of Fairy Tail volumes", "Feari Teiru", "feari teiru",
                                 "Fairy Tail (anime)", "Plot of Fairy Tail", "A", "B", "C", "D", "E", "F"]),
    ["Feari Teiru", "Fairy Tail (anime)", "A", "B", "C", "D", "E", "F"])
+# the seen seed (2026-09-24, the Fushigi Yugi trace): the exporter's ASCII alias row of an accented
+# name ("fushigi y gi") is the name, not a fresh search that burns one of ALIAS_LIMIT's slots
+eq("alias terms: the name's stored ASCII normalize() row is skipped",
+   R.alias_terms("Fushigi Yûgi", ["Fushigi Yûgi", "fushigi y gi", "Curious Play"]), ["Curious Play"])
+from to_mangarr import normalize  # noqa: E402
+eq("ascii_normalize() is the exporter's normalize()",
+   [R.ascii_normalize(x) for x in ("Fushigi Yûgi", "Let’s Do It!", " Ranma ½ ", "Ⅰ Ａ")],
+   [normalize(x) for x in ("Fushigi Yûgi", "Let’s Do It!", " Ranma ½ ", "Ⅰ Ａ")])
 eq("deslug: Mangarr's de-slugged foreign id form", R.deslug("Let\u2019s Do It Already!"), "let s do it already")
 eq("deslug keeps the name's key", R.key(R.deslug("Re:Zero (The Sanctuary and the Witch of Greed)")),
    R.key("Re:Zero (The Sanctuary and the Witch of Greed)"))
@@ -263,7 +288,7 @@ eq("R6: version / release / tankobon / 2-in-1 are qualifiers",
                                     "Foo (Shins\u014dban)", "Foo (English-language volume list)")],
    ["Yo-kai Watch", "Tomie", "Arata: The Legend", "Foo", "Foo", "Foo", "Foo"])
 eq("R6: an unclosed outer parenthetical goes too",
-   R.edition_stripped("Ranma \u00bd (2014 English release (2-in-1 Edition)"), "Ranma \u00bd")
+   R.edition_stripped("Ranma \u00bd (2014 English release (2-in-1 Edition)"), "Ranma 1/2")   # for_search()'s numeric fold
 eq("R6: never an arc, a chapter list, a nested series or a plain subtitle",
    [R.edition_stripped(n) for n in ("Re:Zero (Truth of Zero)", "The Wallflower (Chapter and volume list)",
                                     "Foo (Manga series (2010 edition))", "Restaurant to Another World (First series)",
